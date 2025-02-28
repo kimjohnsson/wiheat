@@ -1,78 +1,98 @@
 """WiHeat Temperature Sensor platform."""
+
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from .const import DOMAIN
 
+
 def async_setup_entry(hass, entry, async_add_entities):
-  """Set up WiHeat temperature sensor entities."""
-  api = hass.data[DOMAIN][entry.entry_id]
-  async_add_entities([
-    WiHeatTemperatureSensor(api),
-    WiHeatOutdoorTemperatureSensor(api),
-    WiHeatWifiSignalSensor(api)
-  ])
+    """Set up WiHeat temperature sensor entities."""
+    api = hass.data[DOMAIN][entry.entry_id]
+    async_add_entities(
+        [
+            WiHeatTemperatureSensor(api),
+            WiHeatOutdoorTemperatureSensor(api),
+            WiHeatWifiSignalSensor(api),
+        ]
+    )
 
-class WiHeatTemperatureSensor(SensorEntity):
-  """Representation of a WiHeat temperature sensor."""
-  
-  def __init__(self, api):
-    self.api = api
-    self._attr_name = "Temperature"
-    self._attr_unique_id = f"{self.api.user_id}-{self.api.device_name}-temperature"
-    self._attr_device_class = SensorDeviceClass.TEMPERATURE
-    self._attr_native_unit_of_measurement = "°C"
-    self._attr_state = None 
-  
-  def update(self):
-    if not self.api.current_state:
-      self._attr_state = None
-    else:
-      self._attr_state = int(self.api.current_state.split('?')[1].split(':')[0])
 
-  @property
-  def state(self):
-    """Return the current state of the sensor (current temperature)."""
-    return self._attr_state
+class WiHeatBaseSensor(SensorEntity):
+    """Base class for WiHeat sensors to share device info."""
 
-class WiHeatOutdoorTemperatureSensor(SensorEntity):
-  """Representation of a WiHeat outdoor temperature sensor."""
-  
-  def __init__(self, api):
-    self.api = api
-    self._attr_name = "Outdoor temperature"
-    self._attr_unique_id = f"{self.api.user_id}-{self.api.device_name}-outdoor-temperature"
-    self._attr_device_class = SensorDeviceClass.TEMPERATURE
-    self._attr_native_unit_of_measurement = "°C"
-    self._attr_state = None 
-  
-  def update(self):
-    if not self.api.current_state:
-      self._attr_state = None
-    else:
-      self._attr_state = int(self.api.current_state.split('?')[1].split(':')[1])
+    def __init__(self, api, name, unique_id, device_class, unit):
+        self.api = api
+        self._attr_name = name
+        self._attr_unique_id = unique_id
+        self._attr_device_class = device_class
+        self._attr_native_unit_of_measurement = unit
+        self._attr_state = None
 
-  @property
-  def state(self):
-    """Return the current state of the sensor (current outdoor temperature)."""
-    return self._attr_state
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, api.device_name)},
+            "name": "Wi-Heat",
+        }
 
-class WiHeatWifiSignalSensor(SensorEntity):
-  """Representation of a WiHeat Wifi signal strength sensor."""
-  
-  def __init__(self, api):
-    self.api = api
-    self._attr_name = "Wifi signal"
-    self._attr_unique_id = f"{self.api.user_id}-{self.api.device_name}-wifi-signal"
-    self._attr_native_unit_of_measurement = "dBm"
-    self._attr_icon = "mdi:signal"
-    self._attr_state = None 
-  
-  def update(self):
-    if not self.api.current_state:
-      self._attr_state = None
-    else:
-      self._attr_state = int(self.api.current_state.split('?')[1].split(':')[2])
+    def update_state(self, value):
+        self._attr_state = value
 
-  @property
-  def state(self):
-    """Return the current state of the sensor (current outdoor temperature)."""
-    return self._attr_state
+    @property
+    def state(self):
+        return self._attr_state
+
+
+class WiHeatTemperatureSensor(WiHeatBaseSensor):
+    """Indoor temperature sensor."""
+
+    def __init__(self, api):
+        super().__init__(
+            api,
+            "Temperature",
+            f"{api.user_id}-{api.device_name}-temperature",
+            SensorDeviceClass.TEMPERATURE,
+            "°C",
+        )
+
+    async def async_update(self):
+        if not self.api.current_state:
+            self._attr_state = None
+        else:
+            self.update_state(int(self.api.current_state.split("?")[1].split(":")[0]))
+
+
+class WiHeatOutdoorTemperatureSensor(WiHeatBaseSensor):
+    """Outdoor temperature sensor."""
+
+    def __init__(self, api):
+        super().__init__(
+            api,
+            "Outdoor Temperature",
+            f"{api.user_id}-{api.device_name}-outdoor-temperature",
+            SensorDeviceClass.TEMPERATURE,
+            "°C",
+        )
+
+    async def async_update(self):
+        if not self.api.current_state:
+            self._attr_state = None
+        else:
+            self.update_state(int(self.api.current_state.split("?")[1].split(":")[1]))
+
+
+class WiHeatWifiSignalSensor(WiHeatBaseSensor):
+    """WiFi signal strength sensor."""
+
+    def __init__(self, api):
+        super().__init__(
+            api,
+            "WiFi Signal",
+            f"{api.user_id}-{api.device_name}-wifi-signal",
+            None,
+            "dBm",
+        )
+        self._attr_icon = "mdi:signal"
+
+    async def async_update(self):
+        if not self.api.current_state:
+            self._attr_state = None
+        else:
+            self.update_state(int(self.api.current_state.split("?")[1].split(":")[2]))
