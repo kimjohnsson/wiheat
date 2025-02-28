@@ -83,10 +83,3 @@ class WiHeatClimate(ClimateEntity):
             self._attr_fan_mode = FAN_HIGH
         else:
             self._attr_fan_mode = FAN_AUTO
-
-    async def async_set_temperature(self, **kwargs):
-        if "temperature" in kwargs:
-            target_temp = int(kwargs["temperature"])
-            if await self.api.set_hvac_state(target_temp):
-                self._attr_target_temperature = target_temp
-                await self.async_update()
