@@ -10,6 +10,7 @@ def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities(
         [
             WiHeatTemperatureSensor(api),
+            WiHeatTargetTemperatureSensor(api),
             WiHeatOutdoorTemperatureSensor(api),
             WiHeatWifiSignalSensor(api),
         ]
@@ -59,13 +60,32 @@ class WiHeatTemperatureSensor(WiHeatBaseSensor):
             self.update_state(int(self.api.current_state.split("?")[1].split(":")[0]))
 
 
+class WiHeatTargetTemperatureSensor(WiHeatBaseSensor):
+    """Target temperature sensor."""
+
+    def __init__(self, api):
+        super().__init__(
+            api,
+            "Target temperature",
+            f"{api.user_id}-{api.device_name}-target-temperature",
+            SensorDeviceClass.TEMPERATURE,
+            "°C",
+        )
+
+    async def async_update(self):
+        if not self.api.current_state:
+            self._attr_state = None
+        else:
+            self.update_state(int(self.api.current_state.split(":")[0]))
+
+
 class WiHeatOutdoorTemperatureSensor(WiHeatBaseSensor):
     """Outdoor temperature sensor."""
 
     def __init__(self, api):
         super().__init__(
             api,
-            "Outdoor Temperature",
+            "Outdoor temperature",
             f"{api.user_id}-{api.device_name}-outdoor-temperature",
             SensorDeviceClass.TEMPERATURE,
             "°C",
@@ -84,7 +104,7 @@ class WiHeatWifiSignalSensor(WiHeatBaseSensor):
     def __init__(self, api):
         super().__init__(
             api,
-            "WiFi Signal",
+            "WiFi signal",
             f"{api.user_id}-{api.device_name}-wifi-signal",
             None,
             "dBm",
