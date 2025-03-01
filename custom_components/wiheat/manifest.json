@@ -1,11 +1,14 @@
 {
   "domain": "wiheat",
-  "name": "Wi Heat",
+  "name": "Wi-Heat",
   "documentation": "https://github.com/kimjohnsson/wiheat",
   "issue_tracker": "https://github.com/kimjohnsson/wiheat/issues",
   "config_flow": true,
   "codeowners": [
     "@kimjohnsson"
+  ],
+  "loggers": [
+    "custom_components.wiheat"
   ],
   "version": "0.1.0"
 }

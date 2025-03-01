@@ -17,6 +17,6 @@ class WiHeatConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             # Ensure you await the login method, not add it to the executor job
             if await api.login():
-                return self.async_create_entry(title="WiHeat", data=user_input)
+                return self.async_create_entry(title="Wi-Heat", data=user_input)
 
         return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA)

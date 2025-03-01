@@ -1,7 +1,10 @@
 """WiHeat API handler."""
 
 import json
+import logging
 from .const import BASE_URL, CONF_CLIENT_ID, SESSION
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class WiHeatAPI:
@@ -19,10 +22,9 @@ class WiHeatAPI:
 
     async def login(self):
         async with self.session.post(
-            BASE_URL,
+            f"{BASE_URL}/usr_API_2.php",
             data={
                 "epost": self.email,
-                "hwid": "",
                 "id": CONF_CLIENT_ID,
                 "psw": self.password,
                 "q": "login",
@@ -45,18 +47,23 @@ class WiHeatAPI:
             self.device_info_fetched = False
             await self.get_device_info()
             return True
+
+        if data.get("status") == "ban":
+            _LOGGER.error(
+                "Too many login attempts, please wait 24 hours and try again."
+            )
+
         return False
 
     async def get_device_info(self):
         if self.device_info_fetched:
-            return
+            return False
 
         async with self.session.post(
-            BASE_URL,
+            f"{BASE_URL}/usr_API_2.php",
             data={
                 "epost": self.user_id,
                 "id": CONF_CLIENT_ID,
-                "namn": "",
                 "psw": self.token,
                 "q": "getVPhwid",
                 "session": SESSION,
@@ -79,7 +86,7 @@ class WiHeatAPI:
             raise ValueError("Device info not available. Ensure login was successful.")
 
         async with self.session.post(
-            "https://wi-heat.com/API_2.php",
+            f"{BASE_URL}/API_2.php",
             data={
                 "dir": "get",
                 "hwid": self.hwid,
@@ -96,7 +103,7 @@ class WiHeatAPI:
             raise ValueError("Device info not available. Ensure login was successful.")
 
         async with self.session.post(
-            "https://wi-heat.com/API_2.php",
+            f"{BASE_URL}/API_2.php",
             data={
                 "data": f"0x6:0x11:0x21:0x{target_temp:02X}:0x08:0x80:0x00:0xF0",
                 "dir": "set",

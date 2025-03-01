@@ -1,11 +1,8 @@
-import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from .const import DOMAIN
 from aiohttp import ClientSession
+from .const import DOMAIN
 from .wiheat_api import WiHeatAPI
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
