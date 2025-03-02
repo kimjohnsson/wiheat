@@ -28,6 +28,8 @@ class WiHeatClimate(ClimateEntity):
         self._attr_has_entity_name = True
         self._attr_precision = 1.0
         self._attr_target_temperature_step = 1.0
+        self._attr_max_temp = 32
+        self._attr_min_temp = 10
         self._attr_name = self.api.device_name
         self._attr_unique_id = f"{self.api.user_id}-{self.api.device_name}"
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
