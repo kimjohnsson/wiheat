@@ -99,3 +99,82 @@ class WiHeatClimate(ClimateEntity):
             ):
                 self._attr_target_temperature = target_temp
                 await self.async_update()
+
+    async def async_set_fan_mode(self, fan_mode):
+        data = self.api.current_state.split(":")
+        target_temp = int(data[0])
+        power_state = int(data[1])
+        current_fan_mode = int(data[2])
+
+        if fan_mode == FAN_LOW:
+            fan_speed = 3
+        elif fan_mode == FAN_MEDIUM:
+            fan_speed = 5
+        elif fan_mode == FAN_HIGH:
+            fan_speed = 7
+        elif fan_mode == FAN_AUTO:
+            fan_speed = 2
+        else:
+            fan_speed = current_fan_mode
+
+        if await self.api.set_hvac_state(
+            generate_payload(target_temp, power_state, fan_speed)
+        ):
+            self._attr_fan_mode = fan_mode
+            await self.async_update()
+
+    async def async_set_hvac_mode(self, hvac_mode):
+        data = self.api.current_state.split(":")
+        target_temp = int(data[0])
+        power_state = int(data[1])
+        fan_mode = int(data[2])
+        current_hvac_mode = int(data[3])
+
+        if target_temp == 128:
+            target_temp = 20
+
+        if hvac_mode == HVACMode.OFF:
+            power_state = 21
+        elif hvac_mode == HVACMode.HEAT:
+            hvac = 1
+        elif hvac_mode == HVACMode.COOL:
+            hvac = 2
+        elif hvac_mode == HVACMode.DRY:
+            hvac = 3
+        elif hvac_mode == HVACMode.FAN_ONLY:
+            hvac = 4
+        else:
+            hvac = current_hvac_mode
+
+        if hvac_mode != HVACMode.OFF:
+            power_state = 11
+
+        if power_state == 21:
+            payload = generate_payload(target_temp, power_state, fan_mode)
+        else:
+            payload = generate_payload(target_temp, power_state, None, hvac)
+
+        if await self.api.set_hvac_state(payload):
+            self._attr_hvac_mode = hvac_mode
+            await self.async_update()
+
+    async def async_turn_off(self):
+        data = self.api.current_state.split(":")
+        target_temp = int(data[0])
+        fan_mode = int(data[2])
+
+        if await self.api.set_hvac_state(generate_payload(target_temp, 21, fan_mode)):
+            self._attr_hvac_mode = HVACMode.OFF
+            await self.async_update()
+
+    async def async_turn_on(self):
+        data = self.api.current_state.split(":")
+        target_temp = int(data[0])
+        fan_mode = int(data[2])
+
+        if target_temp == 128:
+            target_temp = 20
+
+        if await self.api.set_hvac_state(generate_payload(target_temp, 11, fan_mode)):
+            self._attr_hvac_mode = HVACMode.HEAT
+            await self.async_update()

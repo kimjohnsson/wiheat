@@ -1,3 +1,5 @@
+from homeassistant.components.climate.const import HVACMode
+
 temp_lookup = {
     10: "0x00",
     11: "0x49",
@@ -41,5 +43,20 @@ hvac_mode_lookup = {
 }
 
 
-def generate_payload(target_temp, target_power_state, target_fan_speed):
-    return f"{temp_lookup[target_temp]}:{power_state_lookup[target_power_state]}:{fan_speed_lookup[target_fan_speed]}:0x16:0x08:0x80:0x00:0xF0"
+def generate_payload(target_temp, power_state, fan_speed, hvac_mode=None):
+    if hvac_mode is not None:
+        mode = hvac_mode_lookup.get(hvac_mode)
+    else:
+        mode = fan_speed_lookup[fan_speed]
+
+    if hvac_mode == HVACMode.COOL:
+        unknownValue = "0x18"
+    else:
+        unknownValue = "0x08"
+
+    if hvac_mode == HVACMode.FAN_ONLY:
+        ion = "0xF4"
+    else:
+        ion = "0xF0"
+
+    return f"{temp_lookup[target_temp]}:{power_state_lookup[power_state]}:{mode}:0x16:{unknownValue}:0x80:0x00:{ion}"
