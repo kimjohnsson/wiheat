@@ -6,8 +6,7 @@ Integrate HVAC sensor in Home Assistant through the Wi-Heat API.
 
 This integration uses the wi-heat api to poll HVAC data in Home Assistant. The Wi-Heat API has been reversed-engendered using an **IVT Nordic Inverter 12 PRN** (work still in progress).
 
-<img src="https://github.com/kimjohnsson/wiheat/blob/main/images/sensors.png?raw=true">
-<img src="https://github.com/kimjohnsson/wiheat/blob/main/images/hvac.png?raw=true">
+<img style="width: 40%" src="https://github.com/kimjohnsson/wiheat/blob/main/images/sensors.png?raw=true"> <img style="width: 40%" src="https://github.com/kimjohnsson/wiheat/blob/main/images/hvac.png?raw=true">
 
 ## Installation
 
