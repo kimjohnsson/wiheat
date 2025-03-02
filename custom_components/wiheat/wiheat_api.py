@@ -98,14 +98,14 @@ class WiHeatAPI:
             self.current_state = await response.text()
             return self.current_state
 
-    async def set_hvac_state(self, target_temp):
+    async def set_hvac_state(self, payload):
         if not self.hwid or not self.device_key:
             raise ValueError("Device info not available. Ensure login was successful.")
 
         async with self.session.post(
             f"{BASE_URL}/API_2.php",
             data={
-                "data": f"0x6:0x11:0x21:0x{target_temp:02X}:0x08:0x80:0x00:0xF0",
+                "data": payload,
                 "dir": "set",
                 "hwid": self.hwid,
                 "psw": self.device_key,

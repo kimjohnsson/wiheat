@@ -19,7 +19,7 @@ The WiHeat API uses a token-based authentication system.
 - **Method:** `POST`
 - **Request Parameters:**
   - `epost`: User's email address.
-  - `id`: Client identifier (e.g., "home-assistant").
+  - `id`: Client identifier (needs to contain '-', e.g., "home-assistant").
   - `psw`: User's password.
   - `q`: API action (`"login"`).
   - `session`: Session token (appears to be static - "A2B3C4D5E6").
@@ -31,7 +31,7 @@ The WiHeat API uses a token-based authentication system.
 - **Method:** `POST`
 - **Request Parameters:**
   - `epost`: user ID (obtained from the login response).
-  - `id`: Client identifier (e.g., "home-assistant").
+  - `id`: Client identifier (needs to contain '-', e.g., "home-assistant").
   - `psw`: Token (obtained from the login response).
   - `q`: API action (`"getVPhwid"`).
   - `session`: Session token (appears to be static - "A2B3C4D5E6").

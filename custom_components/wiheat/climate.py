@@ -10,6 +10,7 @@ from homeassistant.components.climate.const import (
 )
 from homeassistant.const import UnitOfTemperature
 from .const import DOMAIN
+from .generate_payload import generate_payload
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -85,3 +86,16 @@ class WiHeatClimate(ClimateEntity):
             self._attr_fan_mode = FAN_HIGH
         else:
             self._attr_fan_mode = FAN_AUTO
+
+    async def async_set_temperature(self, **kwargs):
+        data = self.api.current_state.split(":")
+        power_state = int(data[1])
+        fan_mode = int(data[2])
+
+        if "temperature" in kwargs:
+            target_temp = int(kwargs["temperature"])
+            if await self.api.set_hvac_state(
+                generate_payload(target_temp, power_state, fan_mode)
+            ):
+                self._attr_target_temperature = target_temp
+                await self.async_update()
