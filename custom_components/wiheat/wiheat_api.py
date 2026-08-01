@@ -18,7 +18,27 @@ class WiHeatAPI:
         self.device_key = None
         self.device_name = None
         self.current_state = None
+        self._target_temperature = None
+        self._indoor_temperature = None
+        self._outdoor_temperature = None
+        self._wifi_signal = None
         self.device_info_fetched = False
+
+    @property
+    def target_temperature(self):
+        return self._target_temperature
+
+    @property
+    def indoor_temperature(self):
+        return self._indoor_temperature
+
+    @property
+    def outdoor_temperature(self):
+        return self._outdoor_temperature
+
+    @property
+    def wifi_signal(self):
+        return self._wifi_signal
 
     async def login(self):
         async with self.session.post(
@@ -96,6 +116,7 @@ class WiHeatAPI:
             },
         ) as response:
             self.current_state = await response.text()
+            self._parse_current_state()
             return self.current_state
 
     async def set_hvac_state(self, payload):
@@ -114,3 +135,34 @@ class WiHeatAPI:
             },
         ) as response:
             return (await response.text()) == "ACK"
+
+    def _parse_current_state(self):
+        """Parse the current HVAC state."""
+
+        self._target_temperature = None
+        self._indoor_temperature = None
+        self._outdoor_temperature = None
+        self._wifi_signal = None
+
+        if not self.current_state:
+            return
+
+        try:
+            target, values = self.current_state.split("?", 1)
+            values = values.split(":")
+
+            self._target_temperature = self._safe_int(target.split(":")[0])
+            self._indoor_temperature = self._safe_int(values[0])
+            self._outdoor_temperature = self._safe_int(values[1])
+            self._wifi_signal = self._safe_int(values[2])
+
+        except (IndexError, ValueError, AttributeError):
+            _LOGGER.debug("Unable to parse current state: %s", self.current_state)
+
+    @staticmethod
+    def _safe_int(value: str | None) -> int | None:
+        """Convert a string to int or return None."""
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None

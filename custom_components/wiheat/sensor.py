@@ -4,14 +4,6 @@ from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from .const import DOMAIN
 
 
-def _safe_int(value: str) -> int | None:
-    """Convert a string to int or return None."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up WiHeat temperature sensor entities."""
     api = hass.data[DOMAIN][entry.entry_id]
@@ -62,12 +54,7 @@ class WiHeatTemperatureSensor(WiHeatBaseSensor):
         )
 
     async def async_update(self):
-        if not self.api.current_state:
-            self._attr_state = None
-        else:
-            self.update_state(
-                _safe_int(self.api.current_state.split("?")[1].split(":")[0])
-            )
+        self.update_state(self.api.indoor_temperature)
 
 
 class WiHeatTargetTemperatureSensor(WiHeatBaseSensor):
@@ -83,10 +70,7 @@ class WiHeatTargetTemperatureSensor(WiHeatBaseSensor):
         )
 
     async def async_update(self):
-        if not self.api.current_state:
-            self._attr_state = None
-        else:
-            self.update_state(_safe_int(self.api.current_state.split(":")[0]))
+        self.update_state(self.api.target_temperature)
 
 
 class WiHeatOutdoorTemperatureSensor(WiHeatBaseSensor):
@@ -102,12 +86,7 @@ class WiHeatOutdoorTemperatureSensor(WiHeatBaseSensor):
         )
 
     async def async_update(self):
-        if not self.api.current_state:
-            self._attr_state = None
-        else:
-            self.update_state(
-                _safe_int(self.api.current_state.split("?")[1].split(":")[1])
-            )
+        self.update_state(self.api.outdoor_temperature)
 
 
 class WiHeatWifiSignalSensor(WiHeatBaseSensor):
@@ -124,9 +103,4 @@ class WiHeatWifiSignalSensor(WiHeatBaseSensor):
         self._attr_icon = "mdi:signal"
 
     async def async_update(self):
-        if not self.api.current_state:
-            self._attr_state = None
-        else:
-            self.update_state(
-                _safe_int(self.api.current_state.split("?")[1].split(":")[2])
-            )
+        self.update_state(self.api.wifi_signal)
