@@ -4,7 +4,7 @@ from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from .const import DOMAIN
 
 
-def async_setup_entry(hass, entry, async_add_entities):
+async def async_setup_entry(hass, entry, async_add_entities):
     """Set up WiHeat temperature sensor entities."""
     api = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
