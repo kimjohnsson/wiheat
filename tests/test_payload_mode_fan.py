@@ -155,11 +155,11 @@ e = entity("22:11:2:2:0:8:F4:1740765339?19:3:-48:0?NA")
 asyncio.run(e.async_set_fan_mode(FAN_HIGH))
 check("ion byte", e.api.sent[0].split(":")[7], "0xF4")
 
-print("\n[7] fan change in dry mode (target 128) must not raise KeyError")
-e = entity("128:11:2:3:0:8:F0:1740765339?19:3:-48:0?NA")
+print("\n[7] fan change in fan-only mode (target 128) must not raise KeyError")
+e = entity("128:11:2:4:0:8:F0:1740765339?19:3:-48:0?NA")
 asyncio.run(e.async_set_fan_mode(FAN_MEDIUM))
-check("payload", e.api.sent[0], "0x3:0x11:0x53:0x16:0x08:0x80:0x00:0xF0")
-check("pump", pump_state(e.api), "fan=5 mode=3 power=11")
+check("payload", e.api.sent[0], "0x3:0x11:0x54:0x16:0x08:0x80:0x00:0xF0")
+check("pump", pump_state(e.api), "fan=5 mode=4 power=11")
 
 print("\n[8] off then on resumes the previous mode instead of forcing heat")
 e = entity("22:11:5:2:0:8:F0:1740765339?19:3:-48:0?NA")
@@ -174,6 +174,60 @@ print("\n[9] no status fetched yet: send nothing rather than guess")
 e = entity(None)
 asyncio.run(e.async_set_fan_mode(FAN_LOW))
 check("payloads sent", e.api.sent, [])
+
+print("\n[10] dry only runs at auto: other fan speeds are refused, not sent")
+e = entity("22:11:2:3:0:8:F0:1740765339?19:3:-48:0?NA")
+asyncio.run(e.async_set_fan_mode(FAN_LOW))
+check("payloads sent", e.api.sent, [])
+check("fan_modes offered", e._attr_fan_modes, [climate.FAN_AUTO])
+
+print("\n[11] fan-only never runs at auto: auto is refused, not sent")
+e = entity("22:11:3:4:0:8:F0:1740765339?19:3:-48:0?NA")
+asyncio.run(e.async_set_fan_mode(climate.FAN_AUTO))
+check("payloads sent", e.api.sent, [])
+check("fan_modes offered", e._attr_fan_modes, [FAN_LOW, FAN_MEDIUM, FAN_HIGH])
+
+print("\n[12] switching into dry forces fan speed to auto")
+e = entity("22:11:7:1:0:8:F0:1740765339?19:3:-48:0?NA")  # fan High, Heat
+asyncio.run(e.async_set_hvac_mode(HVACMode.DRY))
+check("pump", pump_state(e.api), "fan=2 mode=3 power=11")
+
+print("\n[13] switching into fan-only forces fan speed off auto (to low)")
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")  # fan Auto, Heat
+asyncio.run(e.async_set_hvac_mode(HVACMode.FAN_ONLY))
+check("pump", pump_state(e.api), "fan=3 mode=4 power=11")
+
+print("\n[14] a stale status echoed right after a SET must not corrupt the next command")
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")  # fan Auto, Heat
+
+class StaleEchoOnce:
+    """Wraps a FakePump so the *next* get_hvac_status() after a SET returns
+    the pre-command status, mimicking a pump whose cloud status lags behind
+    the command it just acknowledged."""
+
+    def __init__(self, pump):
+        self._pump = pump
+        self._pre_set_state = pump.current_state
+        self.sent = pump.sent
+
+    async def set_hvac_state(self, payload):
+        self._pre_set_state = self._pump.current_state
+        return await self._pump.set_hvac_state(payload)
+
+    async def get_hvac_status(self):
+        # Always hands back what the pump reported *before* the last SET.
+        return self._pre_set_state
+
+    @property
+    def current_state(self):
+        return self._pump.current_state
+
+
+e.api = StaleEchoOnce(e.api)
+asyncio.run(e.async_set_hvac_mode(HVACMode.COOL))
+asyncio.run(e.async_set_fan_mode(FAN_LOW))
+check("payload", e.api.sent[-1], "0x5:0x11:0x32:0x16:0x08:0x80:0x00:0xF0")
+check("entity mode stayed cool", e._attr_hvac_mode, HVACMode.COOL)
 
 print("\n" + "=" * 62)
 if FAILURES:
