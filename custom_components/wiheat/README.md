@@ -75,7 +75,7 @@ The WiHeat API uses a token-based authentication system.
   ```
 
   - Values are colon and question mark separated.
-  - `target_temp`: Target temperature (degrees Celsius).
+  - `target_temp`: Target temperature (degrees Celsius). Reported as `128` when the active mode has no target temperature — this is always the case in Dry and Fan only (see the examples for those modes below).
   - `power_state`: `11` for On, `21` for Off.
   - `fan_speed`: `3` for Low, `5` for Medium, `7` for High, `2` for Auto.
   - `hvac_mode`: `1` for Heat, `2` for Cool, `3` for Dry, `4` for Fan only.
@@ -126,17 +126,29 @@ target_temp:power_state:mode_fan_speed:unknown:swing_mode:unknown:plasmacluster_
 - `power_state`:
   - `0x11`: On
   - `0x21`: Off
-- `mode_fan_speed`:
-  - `fan_speed`:
-    - `0x31`: Low (3 in response)
-    - `0x51`: Medium (5 in response)
-    - `0x71`: High: (7 in response)
-    - `0x21`: Auto: (2 in response)
-  - `hvac_mode`
-    - `0x31`: Heat (1 in response)
-    - `0x22`: Cool (2 in response)
-    - `0x23`: Dry (3 in response)
-    - `0x34`: Fan only (4 in response)
+- `mode_fan_speed`: a single byte that packs **both** the fan speed and the HVAC mode:
+
+  ```
+  mode_fan_speed = (fan_speed << 4) | hvac_mode
+  ```
+
+  - `fan_speed` (same numeric values the status response reports):
+    - `2`: Auto
+    - `3`: Low
+    - `5`: Medium
+    - `7`: High
+  - `hvac_mode` (same numeric values the status response reports):
+    - `1`: Heat
+    - `2`: Cool
+    - `3`: Dry
+    - `4`: Fan only
+
+  For example, `0x32` is fan `3` (Low) + mode `2` (Cool). Encoding only one half and leaving the other at whatever value it last had silently changes both halves at once — e.g. sending `0x31` to select fan Low while in Cool mode also switches the HVAC mode to Heat, because `0x31` is fan `3` + mode `1`. This tripped up an early version of the Home Assistant integration, which read this as two independently-settable values.
+
+  **Fan-speed restrictions per HVAC mode** (confirmed on real hardware; the app itself does not surface this):
+  - Dry only accepts fan speed Auto (`2`). Any other fan speed is rejected: the "Set HVAC State" call does not respond with `ACK`.
+  - Fan only never accepts fan speed Auto (`2`). It must be given Low, Medium, or High explicitly, or the command is rejected the same way.
+  - Heat and Cool accept all four fan speeds.
 - `unknown`: Unknown values
 - `swing_mode`:
   - `vertical`:
@@ -463,8 +475,10 @@ This is some examples of what is sent in the data attribute when making changes 
     0x1:0x11:0x23:0x16:0x08:0x80:0x00:0xF0
     128:11:2:3:0:8:F0:1740765836?19:1:-50:0?NA
     ```
+    Note the `128` in place of a target temperature (Dry has no target), and the fan speed staying at `2` (Auto) — Dry only accepts Auto, see `mode_fan_speed` above.
   - Fan only
     ```
     0x1:0x11:0x34:0x16:0x08:0x80:0x00:0xF4
     128:11:3:4:0:8:F4:1740765879?19:2:-48:0?NA
     ```
+    Same `128` target-temperature placeholder as Dry. The fan speed here is `3` (Low), not Auto — Fan only never accepts Auto, see `mode_fan_speed` above.
