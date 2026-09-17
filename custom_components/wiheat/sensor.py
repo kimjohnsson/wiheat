@@ -12,6 +12,7 @@ from homeassistant.const import (
 )
 
 from .const import DOMAIN
+from .generate_payload import NO_TARGET_TEMP
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -72,7 +73,11 @@ class WiHeatTargetTemperatureSensor(WiHeatBaseSensor):
         super().__init__(api, "Target temperature", "target-temperature")
 
     async def async_update(self):
-        self._attr_native_value = self.api.target_temperature
+        value = self.api.target_temperature
+        # In Dry and Fan-only the pump holds no target and reports 128; that is
+        # "no target", not a temperature, so the sensor shows unknown instead
+        # of a 128 C spike in the history graph (seen live).
+        self._attr_native_value = None if value == NO_TARGET_TEMP else value
 
 
 class WiHeatOutdoorTemperatureSensor(WiHeatBaseSensor):
