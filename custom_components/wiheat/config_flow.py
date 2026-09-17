@@ -1,22 +1,63 @@
 import voluptuous as vol
 from homeassistant import config_entries
-from aiohttp import ClientSession
-from .const import DOMAIN
-from .wiheat_api import WiHeatAPI
+from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
-DATA_SCHEMA = vol.Schema({"email": str, "password": str})
+from .const import DOMAIN
+from .wiheat_api import (
+    WiHeatAPI,
+    WiHeatAuthError,
+    WiHeatBannedError,
+    WiHeatConnectionError,
+)
+
+DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_EMAIL): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.EMAIL, autocomplete="username")
+        ),
+        vol.Required(CONF_PASSWORD): TextSelector(
+            TextSelectorConfig(
+                type=TextSelectorType.PASSWORD, autocomplete="current-password"
+            )
+        ),
+    }
+)
 
 
 class WiHeatConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WiHeat."""
 
-    async def async_step_user(self, user_input=None):
-        if user_input is not None:
-            session = ClientSession()
-            api = WiHeatAPI(user_input["email"], user_input["password"], session)
+    VERSION = 1
 
-            # Ensure you await the login method, not add it to the executor job
-            if await api.login():
+    async def async_step_user(self, user_input=None):
+        errors = {}
+
+        if user_input is not None:
+            await self.async_set_unique_id(user_input[CONF_EMAIL].lower())
+            self._abort_if_unique_id_configured()
+
+            api = WiHeatAPI(
+                user_input[CONF_EMAIL],
+                user_input[CONF_PASSWORD],
+                async_get_clientsession(self.hass),
+            )
+            try:
+                await api.login()
+            except WiHeatBannedError:
+                errors["base"] = "too_many_attempts"
+            except WiHeatAuthError:
+                errors["base"] = "invalid_auth"
+            except WiHeatConnectionError:
+                errors["base"] = "cannot_connect"
+            else:
                 return self.async_create_entry(title="Wi-Heat", data=user_input)
 
-        return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA)
+        return self.async_show_form(
+            step_id="user", data_schema=DATA_SCHEMA, errors=errors
+        )

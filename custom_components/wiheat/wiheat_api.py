@@ -1,10 +1,31 @@
 """WiHeat API handler."""
 
+from __future__ import annotations
+
 import json
 import logging
+
+import aiohttp
+
 from .const import BASE_URL, CONF_CLIENT_ID, SESSION
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class WiHeatError(Exception):
+    """Base error for the Wi-Heat API."""
+
+
+class WiHeatConnectionError(WiHeatError):
+    """Could not reach the API, or it answered with something unexpected."""
+
+
+class WiHeatAuthError(WiHeatError):
+    """The API rejected the credentials."""
+
+
+class WiHeatBannedError(WiHeatAuthError):
+    """Too many login attempts; the API blocks logins for 24 hours."""
 
 
 class WiHeatAPI:
@@ -40,66 +61,77 @@ class WiHeatAPI:
     def wifi_signal(self):
         return self._wifi_signal
 
+    async def _post_json(self, path, data):
+        """POST a form and decode the JSON body, mapping failures to typed errors."""
+        try:
+            async with self.session.post(f"{BASE_URL}/{path}", data=data) as response:
+                body = await response.text()
+        except (aiohttp.ClientError, OSError, TimeoutError) as err:
+            raise WiHeatConnectionError(f"Could not reach Wi-Heat: {err}") from err
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as err:
+            _LOGGER.debug("Non-JSON response from %s: %s", path, body)
+            raise WiHeatConnectionError(
+                f"Unexpected response from Wi-Heat ({path})"
+            ) from err
+
     async def login(self):
-        async with self.session.post(
-            f"{BASE_URL}/usr_API_2.php",
-            data={
+        """Log in and fetch the device details.
+
+        Raises WiHeatBannedError, WiHeatAuthError or WiHeatConnectionError;
+        returns True on success so existing callers can keep `if await login()`.
+        """
+        data = await self._post_json(
+            "usr_API_2.php",
+            {
                 "epost": self.email,
                 "id": CONF_CLIENT_ID,
                 "psw": self.password,
                 "q": "login",
                 "session": SESSION,
             },
-        ) as response:
-            body = await response.text()
+        )
 
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError as e:
-            _LOGGER.error("Error decoding JSON: %s", e)
-            _LOGGER.error("Response body: %s", body)
-            return False
-
-        if "token" in data:
+        if isinstance(data, dict) and "token" in data:
             self.token = data["token"]
             self.user_id = data["id"]
-
             self.device_info_fetched = False
             await self.get_device_info()
             return True
 
-        if data.get("status") == "ban":
-            _LOGGER.error(
-                "Too many login attempts, please wait 24 hours and try again."
+        if isinstance(data, dict) and data.get("status") == "ban":
+            raise WiHeatBannedError(
+                "Too many login attempts; Wi-Heat blocks logins for 24 hours"
             )
 
-        return False
+        raise WiHeatAuthError("Wi-Heat rejected the email or password")
 
     async def get_device_info(self):
         if self.device_info_fetched:
             return False
 
-        async with self.session.post(
-            f"{BASE_URL}/usr_API_2.php",
-            data={
+        data = await self._post_json(
+            "usr_API_2.php",
+            {
                 "epost": self.user_id,
                 "id": CONF_CLIENT_ID,
                 "psw": self.token,
                 "q": "getVPhwid",
                 "session": SESSION,
             },
-        ) as response:
-            body = await response.text()
+        )
 
-            try:
-                data = json.loads(body)
-            except json.JSONDecodeError as e:
-                _LOGGER.error("Error decoding JSON: %s", e)
-                _LOGGER.error("Response body: %s", body)
-                return False
+        # The API answers [device name, hwid, device key]; anything else is an
+        # error object or a changed API, not something to unpack blindly.
+        if not isinstance(data, list) or len(data) != 3:
+            _LOGGER.debug("Unexpected device info response: %s", data)
+            raise WiHeatConnectionError("Unexpected device info response from Wi-Heat")
 
         self.device_name, self.hwid, self.device_key = data
         self.device_info_fetched = True
+        return True
 
     async def get_hvac_status(self):
         if not self.hwid or not self.device_key:

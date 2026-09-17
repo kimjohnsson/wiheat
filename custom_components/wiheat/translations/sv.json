@@ -1,4 +1,24 @@
 {
+  "config": {
+    "step": {
+      "user": {
+        "title": "Wi-Heat",
+        "description": "Logga in med kontot du använder i Wi-Heat-appen.",
+        "data": {
+          "email": "E-post",
+          "password": "Lösenord"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Fel e-post eller lösenord.",
+      "cannot_connect": "Kunde inte nå Wi-Heat. Kontrollera anslutningen och försök igen.",
+      "too_many_attempts": "För många inloggningsförsök. Wi-Heat spärrar inloggning i 24 timmar; vänta innan du försöker igen."
+    },
+    "abort": {
+      "already_configured": "Det här Wi-Heat-kontot är redan konfigurerat."
+    }
+  },
   "entity": {
     "climate": {
       "wiheat": {

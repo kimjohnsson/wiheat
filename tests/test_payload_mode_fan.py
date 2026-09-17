@@ -43,7 +43,7 @@ def _load_component():
     sys.modules["wiheat_under_test"] = pkg
 
     loaded = {}
-    for name in ("const", "generate_payload", "climate"):
+    for name in ("const", "generate_payload", "wiheat_api", "climate", "sensor"):
         spec = importlib.util.spec_from_file_location(
             f"wiheat_under_test.{name}", COMPONENT / f"{name}.py"
         )
@@ -57,6 +57,8 @@ def _load_component():
 _mods = _load_component()
 generate_payload = _mods["generate_payload"]
 climate = _mods["climate"]
+wiheat_api = _mods["wiheat_api"]
+sensor = _mods["sensor"]
 
 encode_mode_fan_speed = generate_payload.encode_mode_fan_speed
 WiHeatClimate = climate.WiHeatClimate
@@ -120,6 +122,13 @@ class FakePump:
 
     async def get_hvac_status(self):
         return self.current_state
+
+    @property
+    def indoor_temperature(self):
+        try:
+            return int(self.current_state.split("?")[1].split(":")[0])
+        except (AttributeError, IndexError, ValueError):
+            return None
 
 
 def entity(state):
@@ -482,6 +491,109 @@ check("second payload carries Cool (0x32), not the stale Heat (0x31)",
 check("pump ends in Cool at fan Low", pump_state(e.api), "fan=3 mode=2 power=11")
 check("entity agrees", (e._attr_hvac_mode, e._attr_fan_mode), (HVACMode.COOL, FAN_LOW))
 check("lock exists from construction", type(entity(None)._send_lock).__name__, "Lock")
+
+# ---------------------------------------------------------------------------
+# API client: status parsing and login outcomes (PR A).
+# ---------------------------------------------------------------------------
+
+print("\n[26] status parsing: a non-numeric outdoor field must not take wifi down with it")
+api = wiheat_api.WiHeatAPI("e", "p", session=None)
+api.current_state = "22:11:2:2:0:8:F0:1740765339?19:NA:-48:0?NA"
+api._parse_current_state()
+check("indoor", api.indoor_temperature, 19)
+check("outdoor is None, not an error", api.outdoor_temperature, None)
+check("wifi still parsed", api.wifi_signal, -48)
+check("target", api.target_temperature, 22)
+api.current_state = "garbage"
+api._parse_current_state()
+check("garbage -> all None", (api.target_temperature, api.indoor_temperature, api.wifi_signal), (None, None, None))
+
+print("\n[27] login: token, wrong password, ban and network failure map to typed errors")
+
+
+class FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    async def text(self):
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class FakeSession:
+    """Answers each POST from a queue of bodies (or exceptions to raise)."""
+
+    def __init__(self, *bodies):
+        self.bodies = list(bodies)
+        self.calls = []
+
+    def post(self, url, data=None):
+        self.calls.append((url.rsplit("/", 1)[-1], data["q"] if data and "q" in data else data.get("dir")))
+        body = self.bodies.pop(0)
+        if isinstance(body, Exception):
+            raise body
+        return FakeResponse(body)
+
+
+def login_outcome(*bodies):
+    api = wiheat_api.WiHeatAPI("me@example.com", "secret", FakeSession(*bodies))
+    try:
+        ok = run(api.login())
+    except wiheat_api.WiHeatError as err:
+        return type(err).__name__, api
+    return ok, api
+
+
+ok, api = login_outcome('{"status":"ok","id":"42","token":"tok"}', '["ACn","HWID","KEY"]')
+check("success returns True", ok, True)
+check("device details stored", (api.user_id, api.device_name, api.hwid, api.device_key), ("42", "ACn", "HWID", "KEY"))
+check("two calls: login then getVPhwid", [c[1] for c in api.session.calls], ["login", "getVPhwid"])
+
+check("wrong password", login_outcome('{"status":"fail"}')[0], "WiHeatAuthError")
+check("ban is an auth error of its own", login_outcome('{"status":"ban"}')[0], "WiHeatBannedError")
+check("non-JSON body", login_outcome("<html>503</html>")[0], "WiHeatConnectionError")
+check("network error", login_outcome(OSError("connection refused"))[0], "WiHeatConnectionError")
+check("device info not a 3-list", login_outcome('{"id":"42","token":"tok"}', '{"error":"nope"}')[0], "WiHeatConnectionError")
+check("ban is also an auth error", issubclass(wiheat_api.WiHeatBannedError, wiheat_api.WiHeatAuthError), True)
+
+print("\n[28] sensors read the parsed values through native_value; unique ids unchanged")
+api = wiheat_api.WiHeatAPI("e", "p", session=None)
+api.user_id, api.device_name = "1", "IVT"
+api.current_state = "22:11:2:2:0:8:F0:1740765339?19:7:-48:0?NA"
+api._parse_current_state()
+sensors = [
+    sensor.WiHeatTemperatureSensor(api),
+    sensor.WiHeatTargetTemperatureSensor(api),
+    sensor.WiHeatOutdoorTemperatureSensor(api),
+    sensor.WiHeatWifiSignalSensor(api),
+]
+for s_ in sensors:
+    run(s_.async_update())
+check("values", [s_.native_value for s_ in sensors], [19, 22, 7, -48])
+check(
+    "unique ids exactly as before",
+    [s_._attr_unique_id for s_ in sensors],
+    ["1-IVT-temperature", "1-IVT-target-temperature", "1-IVT-outdoor-temperature", "1-IVT-wifi-signal"],
+)
+check("measurements have a state class, the setpoint does not",
+      [getattr(s_, "_attr_state_class", None) for s_ in sensors],
+      ["measurement", None, "measurement", "measurement"])
+check("wifi is a diagnostic signal-strength sensor in dBm",
+      (sensors[3]._attr_device_class, sensors[3]._attr_native_unit_of_measurement, sensors[3]._attr_entity_category),
+      ("signal_strength", "dBm", "diagnostic"))
+
+print("\n[29] climate current temperature comes from the parsed status, not a re-parse")
+e = entity("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA")
+run(e.async_update())
+check("current temperature", e._attr_current_temperature, 19)
+e.api.current_state = "22:11:2:2:0:8:F0:1740765339"  # seven fields, no '?': used to raise IndexError
+run(e.async_update())
+check("no '?' segment -> None, no crash", e._attr_current_temperature, None)
 
 print("\n" + "=" * 62)
 if FAILURES:
