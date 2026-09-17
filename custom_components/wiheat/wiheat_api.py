@@ -94,7 +94,10 @@ class WiHeatAPI:
             },
         )
 
-        if isinstance(data, dict) and "token" in data:
+        # A rejected login is HTTP 200 with the token key present but empty:
+        #     {"status":"fail","id":"","token":""}
+        # (captured live 2026-09-17), so the key alone proves nothing.
+        if isinstance(data, dict) and data.get("token"):
             self.token = data["token"]
             self.user_id = data["id"]
             self.device_info_fetched = False

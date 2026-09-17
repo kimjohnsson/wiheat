@@ -564,6 +564,9 @@ check("device details stored", (api.user_id, api.device_name, api.hwid, api.devi
 check("two calls: login then getVPhwid", [c[1] for c in api.session.calls], ["login", "getVPhwid"])
 
 check("wrong password", login_outcome('{"status":"fail"}')[0], "WiHeatAuthError")
+outcome, api = login_outcome('{"status":"fail","id":"","token":""}')  # the real answer, captured live
+check("wrong password: real body has an EMPTY token key -> auth error, not cannot_connect", outcome, "WiHeatAuthError")
+check("no device-info call made with an empty token", [c[1] for c in api.session.calls], ["login"])
 check("ban is an auth error of its own", login_outcome('{"status":"ban"}')[0], "WiHeatBannedError")
 check("non-JSON body", login_outcome("<html>503</html>")[0], "WiHeatConnectionError")
 check("network error", login_outcome(OSError("connection refused"))[0], "WiHeatConnectionError")
