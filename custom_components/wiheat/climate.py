@@ -158,7 +158,9 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         # API already has cached, in case a status was fetched before this
         # entity was constructed.
         self._state = self._decode_status(api.current_state)
-        self._send_lock = None  # created on first use, inside the event loop
+        # Serializes every read-modify-write of `_state` in `_apply()`, not
+        # just the network call -- see there.
+        self._send_lock = asyncio.Lock()
         self._last_send = 0.0
         self._attr_current_temperature = None
         self._attr_target_temperature = None
@@ -339,31 +341,35 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
 
         A refused command raises, so the user sees an error instead of the
         control silently snapping back.
+
+        The whole read-modify-write runs under `_send_lock`: two service
+        calls arriving together (say "Cool" and "fan Low") must not both
+        build their payload from the same starting state, or the second one
+        would re-send the first one's *old* mode and undo it. The second call
+        waits, then builds from the state the first call left behind.
         """
-        if self._state is None:
-            return False
-
-        swing_vertical = overrides.pop(
-            "swing_vertical", SWING_MODE_TO_VALUE[self._attr_swing_mode]
-        )
-        swing_horizontal = overrides.pop(
-            "swing_horizontal", self._swing_horizontal_value()
-        )
-        new_state = {**self._state, **overrides}
-
-        payload = generate_payload(
-            new_state["target_temp"],
-            new_state["power_state"],
-            new_state["fan_speed"],
-            new_state["hvac_mode"],
-            swing_horizontal=swing_horizontal,
-            swing_vertical=swing_vertical,
-            ion=new_state["ion"],
-        )
-
-        if self._send_lock is None:
-            self._send_lock = asyncio.Lock()
         async with self._send_lock:
+            if self._state is None:
+                return False
+
+            swing_vertical = overrides.pop(
+                "swing_vertical", SWING_MODE_TO_VALUE[self._attr_swing_mode]
+            )
+            swing_horizontal = overrides.pop(
+                "swing_horizontal", self._swing_horizontal_value()
+            )
+            new_state = {**self._state, **overrides}
+
+            payload = generate_payload(
+                new_state["target_temp"],
+                new_state["power_state"],
+                new_state["fan_speed"],
+                new_state["hvac_mode"],
+                swing_horizontal=swing_horizontal,
+                swing_vertical=swing_vertical,
+                ion=new_state["ion"],
+            )
+
             for attempt in (1, 2):
                 wait = MIN_COMMAND_GAP - (time.monotonic() - self._last_send)
                 if wait > 0:
@@ -375,15 +381,18 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
                 if attempt == 1:
                     await asyncio.sleep(RETRY_DELAY)
 
-        if not acknowledged:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN, translation_key="pump_busy"
-            )
+            if not acknowledged:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="pump_busy"
+                )
 
-        self._state = new_state
-        self._attr_swing_mode = VALUE_TO_SWING_MODE[swing_vertical]
-        self._attr_swing_horizontal_mode = VALUE_TO_SWING_H_MODE.get(swing_horizontal)
-        self._apply_state_to_attrs(new_state)
+            self._state = new_state
+            self._attr_swing_mode = VALUE_TO_SWING_MODE[swing_vertical]
+            self._attr_swing_horizontal_mode = VALUE_TO_SWING_H_MODE.get(
+                swing_horizontal
+            )
+            self._apply_state_to_attrs(new_state)
+
         return True
 
     async def async_update(self):
