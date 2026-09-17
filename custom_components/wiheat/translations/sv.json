@@ -1,0 +1,28 @@
+{
+  "entity": {
+    "climate": {
+      "wiheat": {
+        "state_attributes": {
+          "swing_mode": {
+            "name": "Luftriktning",
+            "state": {
+              "auto": "Auto",
+              "up": "Upp",
+              "center": "Rakt fram",
+              "down": "Ned"
+            }
+          },
+          "swing_horizontal_mode": {
+            "name": "Swing",
+            "state": {
+              "left": "Vänster",
+              "center": "Mitten",
+              "right": "Höger",
+              "swing": "Swing"
+            }
+          }
+        }
+      }
+    }
+  }
+}

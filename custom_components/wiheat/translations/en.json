@@ -1,0 +1,28 @@
+{
+  "entity": {
+    "climate": {
+      "wiheat": {
+        "state_attributes": {
+          "swing_mode": {
+            "name": "Louvre direction",
+            "state": {
+              "auto": "Auto",
+              "up": "Up",
+              "center": "Forward",
+              "down": "Down"
+            }
+          },
+          "swing_horizontal_mode": {
+            "name": "Swing",
+            "state": {
+              "left": "Left",
+              "center": "Center",
+              "right": "Right",
+              "swing": "Swing"
+            }
+          }
+        }
+      }
+    }
+  }
+}
