@@ -67,6 +67,18 @@ WiHeatClimate = climate.WiHeatClimate
 climate.MIN_COMMAND_GAP = 0
 climate.RETRY_DELAY = 0
 
+# One event loop for the whole file. The entity creates its asyncio.Lock in
+# __init__; on Python < 3.10 a Lock binds to the loop current at creation,
+# and `asyncio.run` would make a fresh loop per call. Home Assistant itself
+# constructs entities inside its running loop, so this only matters here.
+LOOP = asyncio.new_event_loop()
+asyncio.set_event_loop(LOOP)
+
+
+def run(coro):
+    return LOOP.run_until_complete(coro)
+
+
 from homeassistant.components.climate.const import (  # noqa: E402
     HVACMode,
     FAN_LOW,
@@ -143,7 +155,7 @@ check("round trip", bad, [])
 
 print("\n[3] the reported bug: fan Low while cooling must stay cooling")
 e = entity("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_fan_mode(FAN_LOW))
+run(e.async_set_fan_mode(FAN_LOW))
 check("payload", e.api.sent[0], "0x5:0x11:0x32:0x16:0x08:0x80:0x00:0xF0")
 check("pump", pump_state(e.api), "fan=3 mode=2 power=11")
 check("entity mode", e._attr_hvac_mode, HVACMode.COOL)
@@ -151,60 +163,60 @@ check("entity fan", e._attr_fan_mode, FAN_LOW)
 
 print("\n[4] setting a temperature while cooling must stay cooling")
 e = entity("22:11:5:2:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_temperature(temperature=24))
+run(e.async_set_temperature(temperature=24))
 check("pump", pump_state(e.api), "fan=5 mode=2 power=11")
 check("entity mode", e._attr_hvac_mode, HVACMode.COOL)
 
 print("\n[5] switching mode keeps the selected fan speed")
 e = entity("22:11:7:1:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_hvac_mode(HVACMode.COOL))
+run(e.async_set_hvac_mode(HVACMode.COOL))
 check("pump", pump_state(e.api), "fan=7 mode=2 power=11")
 
 print("\n[6] plasmacluster survives an unrelated change")
 e = entity("22:11:2:2:0:8:F4:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_fan_mode(FAN_HIGH))
+run(e.async_set_fan_mode(FAN_HIGH))
 check("ion byte", e.api.sent[0].split(":")[7], "0xF4")
 
 print("\n[7] fan change in fan-only mode (target 128) must not raise KeyError")
 e = entity("128:11:2:4:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_fan_mode(FAN_MEDIUM))
+run(e.async_set_fan_mode(FAN_MEDIUM))
 check("payload", e.api.sent[0], "0x3:0x11:0x54:0x16:0x08:0x80:0x00:0xF0")
 check("pump", pump_state(e.api), "fan=5 mode=4 power=11")
 
 print("\n[8] off then on resumes the previous mode instead of forcing heat")
 e = entity("22:11:5:2:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_turn_off())
+run(e.async_turn_off())
 check("pump after off", pump_state(e.api), "fan=5 mode=2 power=21")
 check("entity after off", e._attr_hvac_mode, HVACMode.OFF)
-asyncio.run(e.async_turn_on())
+run(e.async_turn_on())
 check("pump after on", pump_state(e.api), "fan=5 mode=2 power=11")
 check("entity after on", e._attr_hvac_mode, HVACMode.COOL)
 
 print("\n[9] no status fetched yet: send nothing rather than guess")
 e = entity(None)
-asyncio.run(e.async_set_fan_mode(FAN_LOW))
+run(e.async_set_fan_mode(FAN_LOW))
 check("payloads sent", e.api.sent, [])
 
 print("\n[10] dry only runs at auto: other fan speeds are refused, not sent")
 e = entity("22:11:2:3:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_fan_mode(FAN_LOW))
+run(e.async_set_fan_mode(FAN_LOW))
 check("payloads sent", e.api.sent, [])
 check("fan_modes offered", e._attr_fan_modes, [climate.FAN_AUTO])
 
 print("\n[11] fan-only never runs at auto: auto is refused, not sent")
 e = entity("22:11:3:4:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_fan_mode(climate.FAN_AUTO))
+run(e.async_set_fan_mode(climate.FAN_AUTO))
 check("payloads sent", e.api.sent, [])
 check("fan_modes offered", e._attr_fan_modes, [FAN_LOW, FAN_MEDIUM, FAN_HIGH])
 
 print("\n[12] switching into dry forces fan speed to auto")
 e = entity("22:11:7:1:0:8:F0:1740765339?19:3:-48:0?NA")  # fan High, Heat
-asyncio.run(e.async_set_hvac_mode(HVACMode.DRY))
+run(e.async_set_hvac_mode(HVACMode.DRY))
 check("pump", pump_state(e.api), "fan=2 mode=3 power=11")
 
 print("\n[13] switching into fan-only forces fan speed off auto (to low)")
 e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")  # fan Auto, Heat
-asyncio.run(e.async_set_hvac_mode(HVACMode.FAN_ONLY))
+run(e.async_set_hvac_mode(HVACMode.FAN_ONLY))
 check("pump", pump_state(e.api), "fan=3 mode=4 power=11")
 
 print("\n[14] a stale status echoed right after a SET must not corrupt the next command")
@@ -234,8 +246,8 @@ class StaleEchoOnce:
 
 
 e.api = StaleEchoOnce(e.api)
-asyncio.run(e.async_set_hvac_mode(HVACMode.COOL))
-asyncio.run(e.async_set_fan_mode(FAN_LOW))
+run(e.async_set_hvac_mode(HVACMode.COOL))
+run(e.async_set_fan_mode(FAN_LOW))
 check("payload", e.api.sent[-1], "0x5:0x11:0x32:0x16:0x08:0x80:0x00:0xF0")
 check("entity mode stayed cool", e._attr_hvac_mode, HVACMode.COOL)
 
@@ -278,32 +290,32 @@ check("round trip", bad, [])
 
 print("\n[17] before swing is ever set, every command still sends 0x08 (no regression)")
 e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_fan_mode(FAN_HIGH))
-asyncio.run(e.async_set_temperature(temperature=24))
-asyncio.run(e.async_set_hvac_mode(HVACMode.COOL))
+run(e.async_set_fan_mode(FAN_HIGH))
+run(e.async_set_temperature(temperature=24))
+run(e.async_set_hvac_mode(HVACMode.COOL))
 check("byte5 on every payload", [swing_byte(p) for p in e.api.sent], ["0x08"] * 3)
 check("entity swing", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", None))
 check("horizontal options offered (no auto)", e._attr_swing_horizontal_modes, ["left", "center", "right", "swing"])
 
 print("\n[18] the bug: swing must survive unrelated commands")
 e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
-asyncio.run(e.async_set_swing_horizontal_mode(climate.SWING_H_LEFT_MODE))
+run(e.async_set_swing_mode(climate.SWING_DOWN))
+run(e.async_set_swing_horizontal_mode(climate.SWING_H_LEFT_MODE))
 check("swing payload", swing_byte(e.api.sent[-1]), "0x2D")
-asyncio.run(e.async_set_fan_mode(FAN_MEDIUM))
-asyncio.run(e.async_set_temperature(temperature=21))
-asyncio.run(e.async_turn_off())
-asyncio.run(e.async_turn_on())
+run(e.async_set_fan_mode(FAN_MEDIUM))
+run(e.async_set_temperature(temperature=21))
+run(e.async_turn_off())
+run(e.async_turn_on())
 check("byte5 kept on fan/temp/off/on", [swing_byte(p) for p in e.api.sent[2:]], ["0x2D"] * 4)
 check("pump status still does not report swing", e.api.current_state.split(":")[4:6], ["0", "8"])
-asyncio.run(e.async_update())
+run(e.async_update())
 check("poll does not reset swing", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("down", "left"))
 
 print("\n[19] entering dry with the louvre down forces it to auto, keeps horizontal")
 e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
-asyncio.run(e.async_set_swing_horizontal_mode(climate.SWING_H_LEFT_MODE))
-asyncio.run(e.async_set_hvac_mode(HVACMode.DRY))
+run(e.async_set_swing_mode(climate.SWING_DOWN))
+run(e.async_set_swing_horizontal_mode(climate.SWING_H_LEFT_MODE))
+run(e.async_set_hvac_mode(HVACMode.DRY))
 check("payload", e.api.sent[-1], "0x3:0x11:0x23:0x16:0x28:0x80:0x00:0xF0")
 check("entity swing", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", "left"))
 check("swing_modes offered in dry", e._attr_swing_modes, ["auto", "up", "center"])
@@ -312,19 +324,19 @@ print("\n[20] down is only offered in heat; refused (not sent) in cool, dry and 
 for mode in (2, 3, 4):
     e = entity(f"22:11:3:{mode}:0:8:F0:1740765339?19:3:-48:0?NA")
     check(f"mode {mode}: swing_modes offered", e._attr_swing_modes, ["auto", "up", "center"])
-    asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
+    run(e.async_set_swing_mode(climate.SWING_DOWN))
     check(f"mode {mode}: payloads sent", e.api.sent, [])
-    asyncio.run(e.async_set_swing_mode(climate.SWING_UP))
+    run(e.async_set_swing_mode(climate.SWING_UP))
     check(f"mode {mode}: up accepted", swing_byte(e.api.sent[-1]), "0x09")
 e = entity("22:11:3:1:0:8:F0:1740765339?19:3:-48:0?NA")
 check("heat: down offered", e._attr_swing_modes, ["auto", "up", "center", "down"])
-asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
+run(e.async_set_swing_mode(climate.SWING_DOWN))
 check("heat: down sent", swing_byte(e.api.sent[-1]), "0x0D")
 
 print("\n[20b] leaving heat with the louvre down forces it to auto")
 e = entity("22:11:3:1:0:8:F0:1740765339?19:3:-48:0?NA")
-asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
-asyncio.run(e.async_set_hvac_mode(HVACMode.COOL))
+run(e.async_set_swing_mode(climate.SWING_DOWN))
+run(e.async_set_hvac_mode(HVACMode.COOL))
 check("payload into cool", swing_byte(e.api.sent[-1]), "0x08")
 check("entity swing", e._attr_swing_mode, "auto")
 
@@ -333,24 +345,24 @@ e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
 e._last_state = types.SimpleNamespace(
     attributes={"swing_mode": "down", "swing_horizontal_mode": "right"}
 )
-asyncio.run(e.async_added_to_hass())
+run(e.async_added_to_hass())
 check("restored", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("down", "right"))
-asyncio.run(e.async_set_fan_mode(FAN_LOW))
+run(e.async_set_fan_mode(FAN_LOW))
 check("first command after restart sends restored swing", swing_byte(e.api.sent[-1]), "0x3D")
 
 print("\n[22] restored down + pump switched to dry from the app: poll falls back to auto")
 e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
 e._last_state = types.SimpleNamespace(attributes={"swing_mode": "down"})
-asyncio.run(e.async_added_to_hass())
+run(e.async_added_to_hass())
 e.api.current_state = "128:11:2:3:0:8:F0:1740765339?19:3:-48:0?NA"  # app put it in dry
-asyncio.run(e.async_update())
+run(e.async_update())
 check("swing after poll", e._attr_swing_mode, "auto")
 check("nothing sent by the poll", e.api.sent, [])
 
 print("\n[23] garbage in the restored state is ignored")
 e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
 e._last_state = types.SimpleNamespace(attributes={"swing_mode": "sideways", "swing_horizontal_mode": 7})
-asyncio.run(e.async_added_to_hass())
+run(e.async_added_to_hass())
 check("defaults kept", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", None))
 
 print("\n[24] a refused command is retried once, then raises a translated error")
@@ -365,7 +377,7 @@ class RefusingPump(FakePump):
 
 e = WiHeatClimate(RefusingPump("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA"))
 try:
-    asyncio.run(e.async_set_swing_mode(climate.SWING_UP))
+    run(e.async_set_swing_mode(climate.SWING_UP))
     raised = None
 except HomeAssistantError as err:
     raised = err
@@ -390,7 +402,7 @@ class FlakyPump(FakePump):
 
 
 e = WiHeatClimate(FlakyPump("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA"))
-asyncio.run(e.async_set_swing_mode(climate.SWING_UP))
+run(e.async_set_swing_mode(climate.SWING_UP))
 check("sent twice", len(e.api.sent), 2)
 check("swing updated after retry", e._attr_swing_mode, "up")
 
@@ -405,7 +417,7 @@ class ExplodingPump(FakePump):
 
 e = WiHeatClimate(ExplodingPump("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA"))
 try:
-    asyncio.run(e.async_set_fan_mode(FAN_HIGH))
+    run(e.async_set_fan_mode(FAN_HIGH))
     raised = None
 except HomeAssistantError as err:
     raised = err
@@ -424,7 +436,7 @@ class StalledPump(FakePump):
 climate.REQUEST_TIMEOUT = 0.05
 e = WiHeatClimate(StalledPump("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA"))
 try:
-    asyncio.run(e.async_set_fan_mode(FAN_HIGH))
+    run(e.async_set_fan_mode(FAN_HIGH))
     raised = None
 except HomeAssistantError as err:
     raised = err
@@ -444,11 +456,32 @@ async def _two_commands():
 
 
 t0 = _time.monotonic()
-asyncio.run(_two_commands())
+run(_two_commands())
 elapsed = _time.monotonic() - t0
 check("second command waited for the gap", elapsed >= 0.2, True)
 check("both sent", [p.split(":")[2] for p in e.api.sent], ["0x31", "0x71"])
 climate.MIN_COMMAND_GAP = 0
+
+print("\n[25b] two commands arriving together: the second builds on the first's result")
+# Review finding on PR #6: the payload used to be built from `_state` *before*
+# taking the lock, so a second call could re-send the first call's old mode.
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")  # Heat, fan Auto
+
+
+async def _together():
+    await asyncio.gather(
+        e.async_set_hvac_mode(HVACMode.COOL),
+        e.async_set_fan_mode(FAN_LOW),
+    )
+
+
+run(_together())
+check("two payloads sent", len(e.api.sent), 2)
+check("second payload carries Cool (0x32), not the stale Heat (0x31)",
+      e.api.sent[1].split(":")[2], "0x32")
+check("pump ends in Cool at fan Low", pump_state(e.api), "fan=3 mode=2 power=11")
+check("entity agrees", (e._attr_hvac_mode, e._attr_fan_mode), (HVACMode.COOL, FAN_LOW))
+check("lock exists from construction", type(entity(None)._send_lock).__name__, "Lock")
 
 print("\n" + "=" * 62)
 if FAILURES:
