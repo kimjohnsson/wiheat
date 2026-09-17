@@ -51,6 +51,9 @@ POWER_OFF = 21
 # is reported to the user.
 MIN_COMMAND_GAP = 3.0
 RETRY_DELAY = 5.0
+# The API session has no timeout of its own; without this a stalled cloud
+# call would hold the service call open for minutes.
+REQUEST_TIMEOUT = 10.0
 
 FAN_MODE_TO_SPEED = {
     FAN_AUTO: FAN_SPEED_AUTO,
@@ -93,8 +96,9 @@ SWING_MODE_TO_VALUE = {
 }
 VALUE_TO_SWING_MODE = {v: k for k, v in SWING_MODE_TO_VALUE.items()}
 
-# Dry and Fan-only cannot point the louvre straight down, confirmed in the
-# Wi-Heat app. Heat and Cool accept every position.
+# Down only works in Heat. Dry and Fan-only refuse it in the app too; in
+# Cool the app can do it but the byte we have (0x0D) is accepted and ignored,
+# or refused -- confirmed on hardware, twice. So it is only offered in Heat.
 SWING_MODES_ALL = [SWING_AUTO, SWING_UP, SWING_CENTER, SWING_DOWN]
 SWING_MODES_NO_DOWN = [SWING_AUTO, SWING_UP, SWING_CENTER]
 
@@ -129,9 +133,9 @@ def _fan_modes_for(hvac_mode_value):
 
 
 def _swing_modes_for(hvac_mode_value):
-    if hvac_mode_value in MODES_WITHOUT_TARGET:
-        return SWING_MODES_NO_DOWN
-    return SWING_MODES_ALL
+    if hvac_mode_value == HVAC_HEAT:
+        return SWING_MODES_ALL
+    return SWING_MODES_NO_DOWN
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -283,6 +287,35 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         if self._attr_swing_mode not in self._attr_swing_modes:
             self._attr_swing_mode = SWING_AUTO
 
+    async def _send(self, payload, attempt):
+        """One attempt at the cloud. Returns False for a refusal *or* a failure.
+
+        This is the boundary to a third-party cloud service: a timeout, a
+        dropped connection or a 5xx must all end up as "the pump did not take
+        the command", not as a stray exception. Anything else escaping here
+        surfaces in Home Assistant as "Unexpected exception" in the websocket
+        API and knocks the frontend's connection over -- seen on hardware.
+        """
+        try:
+            acknowledged = await asyncio.wait_for(
+                self.api.set_hvac_state(payload), timeout=REQUEST_TIMEOUT
+            )
+        except Exception as err:  # noqa: BLE001 -- external I/O boundary
+            _LOGGER.warning(
+                "WiHeat command failed (attempt %d): %s: %s",
+                attempt,
+                type(err).__name__,
+                err,
+            )
+            return False
+        if not acknowledged:
+            _LOGGER.warning(
+                "WiHeat did not acknowledge payload (attempt %d): %s",
+                attempt,
+                payload,
+            )
+        return acknowledged
+
     def _swing_horizontal_value(self):
         if self._attr_swing_horizontal_mode is None:
             return SWING_H_AUTO
@@ -335,15 +368,10 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
                 wait = MIN_COMMAND_GAP - (time.monotonic() - self._last_send)
                 if wait > 0:
                     await asyncio.sleep(wait)
-                acknowledged = await self.api.set_hvac_state(payload)
+                acknowledged = await self._send(payload, attempt)
                 self._last_send = time.monotonic()
                 if acknowledged:
                     break
-                _LOGGER.warning(
-                    "WiHeat did not acknowledge payload (attempt %d): %s",
-                    attempt,
-                    payload,
-                )
                 if attempt == 1:
                     await asyncio.sleep(RETRY_DELAY)
 
@@ -445,9 +473,9 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         elif mode_value == HVAC_FAN_ONLY and fan_speed == FAN_SPEED_AUTO:
             fan_speed = FAN_SPEED_LOW
 
-        # Same for the louvre: Dry and Fan-only cannot point straight down.
+        # Same for the louvre: only Heat can point straight down.
         swing_vertical = SWING_MODE_TO_VALUE[self._attr_swing_mode]
-        if mode_value in MODES_WITHOUT_TARGET and swing_vertical == SWING_V_DOWN:
+        if mode_value != HVAC_HEAT and swing_vertical == SWING_V_DOWN:
             swing_vertical = SWING_V_AUTO
 
         await self._apply(
