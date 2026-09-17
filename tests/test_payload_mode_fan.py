@@ -61,9 +61,11 @@ climate = _mods["climate"]
 encode_mode_fan_speed = generate_payload.encode_mode_fan_speed
 WiHeatClimate = climate.WiHeatClimate
 
-# The real entity spaces commands out to stay clear of the pump's busy-lock;
-# the fake pump has no such problem and the tests should not take minutes.
+# The real entity spaces commands out and retries after a pause to stay clear
+# of the pump's busy-lock; the fake pump has no such problem and the tests
+# should not take minutes.
 climate.MIN_COMMAND_GAP = 0
+climate.RETRY_DELAY = 0
 
 from homeassistant.components.climate.const import (  # noqa: E402
     HVACMode,
@@ -339,7 +341,7 @@ e._last_state = types.SimpleNamespace(attributes={"swing_mode": "sideways", "swi
 asyncio.run(e.async_added_to_hass())
 check("defaults kept", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", None))
 
-print("\n[24] a refused command raises and leaves the entity untouched")
+print("\n[24] a refused command is retried once, then raises a translated error")
 from homeassistant.exceptions import HomeAssistantError  # noqa: E402
 
 
@@ -354,11 +356,31 @@ try:
     asyncio.run(e.async_set_swing_mode(climate.SWING_UP))
     raised = None
 except HomeAssistantError as err:
-    raised = str(err)
-check("raised HomeAssistantError", raised is not None and "0x09" in raised, True)
-check("payload was attempted", len(e.api.sent), 1)
+    raised = err
+check("raised HomeAssistantError", isinstance(raised, HomeAssistantError), True)
+check("translated, no raw bytes in the message", (raised.translation_key, str(raised)), ("pump_busy", ""))
+check("attempted twice (one retry)", len(e.api.sent), 2)
 check("swing not updated", e._attr_swing_mode, "auto")
 check("mode not updated", e._attr_hvac_mode, HVACMode.COOL)
+
+print("\n[24b] a refusal followed by an ACK on retry succeeds silently")
+
+
+class FlakyPump(FakePump):
+    refusals = 1
+
+    async def set_hvac_state(self, payload):
+        if self.refusals:
+            self.refusals -= 1
+            self.sent.append(payload)
+            return False
+        return await super().set_hvac_state(payload)
+
+
+e = WiHeatClimate(FlakyPump("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA"))
+asyncio.run(e.async_set_swing_mode(climate.SWING_UP))
+check("sent twice", len(e.api.sent), 2)
+check("swing updated after retry", e._attr_swing_mode, "up")
 
 print("\n[25] commands are spaced out by MIN_COMMAND_GAP")
 climate.MIN_COMMAND_GAP = 0.2
