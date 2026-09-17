@@ -1,11 +1,21 @@
-"""WiHeat Temperature Sensor platform."""
+"""WiHeat sensor platform."""
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
+from homeassistant.const import (
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
+    UnitOfTemperature,
+)
+
 from .const import DOMAIN
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up WiHeat temperature sensor entities."""
+    """Set up WiHeat sensor entities."""
     api = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
         [
@@ -18,89 +28,81 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class WiHeatBaseSensor(SensorEntity):
-    """Base class for WiHeat sensors to share device info."""
+    """Base class for WiHeat sensors to share device info.
 
-    def __init__(self, api, name, unique_id, device_class, unit):
+    Values come from the shared API object, which the climate entity's poll
+    keeps fresh; the sensors only read it.
+    """
+
+    _attr_has_entity_name = True
+
+    def __init__(self, api, name, unique_id_suffix):
         self.api = api
         self._attr_name = name
-        self._attr_unique_id = unique_id
-        self._attr_device_class = device_class
-        self._attr_native_unit_of_measurement = unit
-        self._attr_state = None
-
+        # Same strings as before this class was reworked, so entity IDs and
+        # recorded history carry over.
+        self._attr_unique_id = f"{api.user_id}-{api.device_name}-{unique_id_suffix}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, api.device_name)},
             "name": "Wi-Heat",
         }
 
-    def update_state(self, value):
-        self._attr_state = value
-
-    @property
-    def state(self):
-        return self._attr_state
-
 
 class WiHeatTemperatureSensor(WiHeatBaseSensor):
     """Indoor temperature sensor."""
 
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+
     def __init__(self, api):
-        super().__init__(
-            api,
-            "Temperature",
-            f"{api.user_id}-{api.device_name}-temperature",
-            SensorDeviceClass.TEMPERATURE,
-            "°C",
-        )
+        super().__init__(api, "Temperature", "temperature")
 
     async def async_update(self):
-        self.update_state(self.api.indoor_temperature)
+        self._attr_native_value = self.api.indoor_temperature
 
 
 class WiHeatTargetTemperatureSensor(WiHeatBaseSensor):
-    """Target temperature sensor."""
+    """Target temperature sensor. A setpoint, so no measurement state class."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
     def __init__(self, api):
-        super().__init__(
-            api,
-            "Target temperature",
-            f"{api.user_id}-{api.device_name}-target-temperature",
-            SensorDeviceClass.TEMPERATURE,
-            "°C",
-        )
+        super().__init__(api, "Target temperature", "target-temperature")
 
     async def async_update(self):
-        self.update_state(self.api.target_temperature)
+        self._attr_native_value = self.api.target_temperature
 
 
 class WiHeatOutdoorTemperatureSensor(WiHeatBaseSensor):
-    """Outdoor temperature sensor."""
+    """Outdoor temperature sensor.
+
+    The pump only reports this intermittently; the value is None (unknown)
+    in between, which is the honest state.
+    """
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
     def __init__(self, api):
-        super().__init__(
-            api,
-            "Outdoor temperature",
-            f"{api.user_id}-{api.device_name}-outdoor-temperature",
-            SensorDeviceClass.TEMPERATURE,
-            "°C",
-        )
+        super().__init__(api, "Outdoor temperature", "outdoor-temperature")
 
     async def async_update(self):
-        self.update_state(self.api.outdoor_temperature)
+        self._attr_native_value = self.api.outdoor_temperature
 
 
 class WiHeatWifiSignalSensor(WiHeatBaseSensor):
     """WiFi signal strength sensor."""
 
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
     def __init__(self, api):
-        super().__init__(
-            api,
-            "WiFi signal",
-            f"{api.user_id}-{api.device_name}-wifi-signal",
-            None,
-            "dBm",
-        )
-        self._attr_icon = "mdi:signal"
+        super().__init__(api, "WiFi signal", "wifi-signal")
 
     async def async_update(self):
-        self.update_state(self.api.wifi_signal)
+        self._attr_native_value = self.api.wifi_signal

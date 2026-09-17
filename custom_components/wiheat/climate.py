@@ -396,18 +396,13 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         return True
 
     async def async_update(self):
-        data = await self.api.get_hvac_status()
+        await self.api.get_hvac_status()
         state = self._decode_status(self.api.current_state)
         if state is None:
             return
         self._state = state
-
-        indoor = data.split("?")[1].split(":")[0]
-        try:
-            self._attr_current_temperature = int(indoor)
-        except (TypeError, ValueError):
-            self._attr_current_temperature = None
-
+        # Already parsed (and None-safe) by the API when it fetched the status.
+        self._attr_current_temperature = self.api.indoor_temperature
         self._apply_state_to_attrs(state)
 
     async def async_set_temperature(self, **kwargs):

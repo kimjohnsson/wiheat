@@ -1,4 +1,24 @@
 {
+  "config": {
+    "step": {
+      "user": {
+        "title": "Wi-Heat",
+        "description": "Sign in with the account you use in the Wi-Heat app.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach Wi-Heat. Check your connection and try again.",
+      "too_many_attempts": "Too many login attempts. Wi-Heat blocks logins for 24 hours; wait before trying again."
+    },
+    "abort": {
+      "already_configured": "This Wi-Heat account is already configured."
+    }
+  },
   "entity": {
     "climate": {
       "wiheat": {
