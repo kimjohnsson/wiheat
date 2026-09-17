@@ -123,12 +123,16 @@ class FakePump:
     async def get_hvac_status(self):
         return self.current_state
 
+    _last_indoor = None
+
     @property
     def indoor_temperature(self):
+        # Mirrors WiHeatAPI: a status that cannot be parsed keeps the last reading.
         try:
-            return int(self.current_state.split("?")[1].split(":")[0])
+            self._last_indoor = int(self.current_state.split("?")[1].split(":")[0])
         except (AttributeError, IndexError, ValueError):
-            return None
+            pass
+        return self._last_indoor
 
 
 def entity(state):
@@ -504,9 +508,14 @@ check("indoor", api.indoor_temperature, 19)
 check("outdoor is None, not an error", api.outdoor_temperature, None)
 check("wifi still parsed", api.wifi_signal, -48)
 check("target", api.target_temperature, 22)
-api.current_state = "garbage"
+api.current_state = "garbage"  # what the cloud answers while the pump is busy
 api._parse_current_state()
-check("garbage -> all None", (api.target_temperature, api.indoor_temperature, api.wifi_signal), (None, None, None))
+check("garbage keeps the last good readings (seen live: 4.5 min of unknown after a mode switch)",
+      (api.target_temperature, api.indoor_temperature, api.wifi_signal), (22, 19, -48))
+fresh = wiheat_api.WiHeatAPI("e", "p", session=None)
+fresh.current_state = "garbage"
+fresh._parse_current_state()
+check("garbage with no earlier reading stays None", fresh.indoor_temperature, None)
 
 print("\n[27] login: token, wrong password, ban and network failure map to typed errors")
 
@@ -586,6 +595,12 @@ check("measurements have a state class, the setpoint does not",
 check("wifi is a diagnostic signal-strength sensor in dBm",
       (sensors[3]._attr_device_class, sensors[3]._attr_native_unit_of_measurement, sensors[3]._attr_entity_category),
       ("signal_strength", "dBm", "diagnostic"))
+api.current_state = "128:11:2:3:0:8:F0:1740765339?19:7:-48:0?NA"  # Dry: no target
+api._parse_current_state()
+run(sensors[1].async_update())
+check("target 128 (no target) is unknown, not 128 C", sensors[1].native_value, None)
+run(sensors[0].async_update())
+check("indoor temperature unaffected", sensors[0].native_value, 19)
 
 print("\n[29] climate current temperature comes from the parsed status, not a re-parse")
 e = entity("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA")
@@ -593,7 +608,7 @@ run(e.async_update())
 check("current temperature", e._attr_current_temperature, 19)
 e.api.current_state = "22:11:2:2:0:8:F0:1740765339"  # seven fields, no '?': used to raise IndexError
 run(e.async_update())
-check("no '?' segment -> None, no crash", e._attr_current_temperature, None)
+check("no '?' segment -> keeps the last reading, no crash", e._attr_current_temperature, 19)
 
 print("\n" + "=" * 62)
 if FAILURES:
