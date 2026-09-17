@@ -79,8 +79,8 @@ The WiHeat API uses a token-based authentication system.
   - `power_state`: `11` for On, `21` for Off.
   - `fan_speed`: `3` for Low, `5` for Medium, `7` for High, `2` for Auto.
   - `hvac_mode`: `1` for Heat, `2` for Cool, `3` for Dry, `4` for Fan only.
-  - `unknown`: Unknown values.
-  - `unknown`: Unknown values.
+  - `unknown`: Unknown value. Always `0` in every capture.
+  - `unknown`: Unknown value. Always `8` in every capture. **This is not the swing position** — see `swing_mode` below: the pump never reports swing.
   - `plasmacluster_state`: `F0` for Off, `F4` for On.
   - `timestamp`: Timestamp in UTC.
   - `current_temp`: Current temperature (degrees Celsius).
@@ -150,18 +150,32 @@ target_temp:power_state:mode_fan_speed:unknown:swing_mode:unknown:plasmacluster_
   - Fan only never accepts fan speed Auto (`2`). It must be given Low, Medium, or High explicitly, or the command is rejected the same way.
   - Heat and Cool accept all four fan speeds.
 - `unknown`: Unknown values
-- `swing_mode`:
-  - `vertical`:
-    - `0x0D`: Down
-    - `0x28`: Left
-    - `0x0C`: Center
-    - `0x09`: Up
-    - `0x08`: Auto
-  - `horizontal`:
-    - `0x28`: Left
-    - `0x18`: Center
-    - `0x38`: Right
-    - `0x88`: All
+- `swing_mode`: a single byte that packs **both** louvre axes, the same way `mode_fan_speed` packs fan speed and HVAC mode:
+
+  ```
+  swing_mode = (horizontal << 4) | vertical
+  ```
+
+  - `vertical` (low nibble) — louvre direction; only Auto actually swings:
+    - `0x8`: Auto (sweeps)
+    - `0x9`: Up
+    - `0xC`: Center (straight ahead)
+    - `0xD`: Down
+  - `horizontal` (high nibble):
+    - `0x1`: Center
+    - `0x2`: Left
+    - `0x3`: Right
+    - `0x8`: Swing (left–right sweep; this is what the app calls "swing")
+    - `0x0`: sent by the app whenever it has not touched the horizontal axis. It is not a position you can pick in the app. Treat it as "not set".
+
+  Every value in the examples below fits: `0x09` = vertical Up with horizontal not set, `0x28` = horizontal Left with vertical Auto, `0x2D` = Left + Down, and so on. Only one axis at a time was ever captured from the app; the mixed combinations have been exercised from Home Assistant on real hardware (see the restrictions).
+
+  **The pump does not report swing.** All eight swing examples below send a different byte 5 and get back the same `0:8` in status positions 4–5. There is no way to read the current louvre position, so a client that wants to preserve it has to remember what it last sent — and a client that always sends `0x08` (as this integration did up to v0.1.3) silently resets the louvre to Auto on every command.
+
+  **Restrictions confirmed on real hardware**
+  - **Down (`0xD`) only works in Heat.** In Cool the pump either ACKs and ignores it or refuses the command; in Dry and Fan only the app itself does not offer it. Sending Down in Cool was one of the things that put the pump into its "busy" state (see Notes).
+  - Every horizontal position, including Swing, works in every HVAC mode.
+  - Mixed combinations have been tried from Home Assistant, not from the app: a horizontal position together with Center (e.g. `0x3C`) works in Heat and Cool; together with Up (`0x19`, `0x39`) it was accepted once and then refused for a while — indistinguishable from the busy state below, so treat that cell as unconfirmed. Not every cell of the 4×4 matrix has been exercised.
 - `unknown`: Unknown values
 - `plasmacluster_state`:
   - `0xF0`: Off
@@ -170,6 +184,9 @@ target_temp:power_state:mode_fan_speed:unknown:swing_mode:unknown:plasmacluster_
 **Notes:**
 
 - This documentation is based on limited observations and may not be accurate for all WiHeat devices or API versions.
+- **The pump goes "busy".** After a mode switch between Heat and Cool (it stops the compressor to reverse the cycle) and after several commands in quick succession, the pump stops taking commands for anything from half a minute to several minutes: "Set HVAC State" returns something other than `ACK`, or the server drops the connection (`ServerDisconnectedError`). While reversing it can also report `power_state` `21` (standby) even though nothing turned it off. Seen four times on one unit; each time it recovered on its own. Clients should space commands out (a few seconds), retry a refusal once after a pause, and then tell the user to wait rather than hammer the API.
+- `0x11` / `0x21` in `power_state` are **states, not a toggle**: every example below sends `0x11` on a running unit and the unit stays on. If the unit turns off after you sent `0x11`, it did that by itself (see the busy note).
+- In Fan only the pump forces plasmacluster (ion) **on** and reports `F4` regardless of what was sent.
 - Use this information responsibly and at your own risk.
 
 **Example Usage:**
@@ -459,6 +476,7 @@ This is some examples of what is sent in the data attribute when making changes 
       0x4f:0x11:0x21:0x16:0x88:0x80:0x00:0xF0
       17:11:2:1:0:8:F0:1740765339?18:6:-48:0?NA
       ```
+    Eight different swing bytes in, the same `0:8` back every time: the status string does not carry the louvre position. See `swing_mode` above.
 - **Changing HVAC mode**
   - Heat
     ```
