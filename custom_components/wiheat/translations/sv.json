@@ -24,5 +24,10 @@
         }
       }
     }
+  },
+  "exceptions": {
+    "pump_busy": {
+      "message": "Pumpen tog inte emot kommandot. Den svarar inte på kommandon en stund efter ett lägesbyte eller flera snabba ändringar - vänta ett par minuter och försök igen."
+    }
   }
 }

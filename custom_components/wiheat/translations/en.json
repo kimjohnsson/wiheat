@@ -24,5 +24,10 @@
         }
       }
     }
+  },
+  "exceptions": {
+    "pump_busy": {
+      "message": "The pump did not accept the command. It stops responding for a while after a mode change or several quick changes - wait a couple of minutes and try again."
+    }
   }
 }

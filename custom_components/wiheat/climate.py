@@ -44,10 +44,13 @@ _LOGGER = logging.getLogger(__name__)
 POWER_ON = 11
 POWER_OFF = 21
 
-# The pump's cloud refuses commands for a minute or two when it gets several
-# in quick succession (seen twice on hardware: 13 and 11 refusals in a row).
-# Commands are serialized and spaced out at least this far apart.
+# The pump refuses commands for a while after a mode switch (it stops the
+# compressor to reverse the cycle) or after several commands in quick
+# succession; seen three times on hardware, up to several minutes. Commands
+# are serialized and spaced out, and a refusal gets one quick retry before it
+# is reported to the user.
 MIN_COMMAND_GAP = 3.0
+RETRY_DELAY = 5.0
 
 FAN_MODE_TO_SPEED = {
     FAN_AUTO: FAN_SPEED_AUTO,
@@ -328,18 +331,25 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         if self._send_lock is None:
             self._send_lock = asyncio.Lock()
         async with self._send_lock:
-            wait = MIN_COMMAND_GAP - (time.monotonic() - self._last_send)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            acknowledged = await self.api.set_hvac_state(payload)
-            self._last_send = time.monotonic()
+            for attempt in (1, 2):
+                wait = MIN_COMMAND_GAP - (time.monotonic() - self._last_send)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                acknowledged = await self.api.set_hvac_state(payload)
+                self._last_send = time.monotonic()
+                if acknowledged:
+                    break
+                _LOGGER.warning(
+                    "WiHeat did not acknowledge payload (attempt %d): %s",
+                    attempt,
+                    payload,
+                )
+                if attempt == 1:
+                    await asyncio.sleep(RETRY_DELAY)
 
         if not acknowledged:
-            _LOGGER.warning("WiHeat did not acknowledge payload: %s", payload)
             raise HomeAssistantError(
-                f"The Wi-Heat pump did not accept the command (payload {payload}). "
-                "It refuses commands for a minute or two after several in quick "
-                "succession; wait and try again."
+                translation_domain=DOMAIN, translation_key="pump_busy"
             )
 
         self._state = new_state
