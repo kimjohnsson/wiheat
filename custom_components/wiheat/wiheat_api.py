@@ -169,13 +169,14 @@ class WiHeatAPI:
             return (await response.text()) == "ACK"
 
     def _parse_current_state(self):
-        """Parse the current HVAC state."""
+        """Parse the current HVAC state.
 
-        self._target_temperature = None
-        self._indoor_temperature = None
-        self._outdoor_temperature = None
-        self._wifi_signal = None
-
+        While the pump is busy (mode switch, several quick commands) the cloud
+        answers with something that is not a status string for a few minutes.
+        The parsed values are then left as they were, so the sensors keep
+        showing the last real reading instead of flipping to unknown while
+        the climate entity, which already keeps its last state, does not.
+        """
         if not self.current_state:
             return
 
@@ -183,13 +184,22 @@ class WiHeatAPI:
             target, values = self.current_state.split("?", 1)
             values = values.split(":")
 
-            self._target_temperature = self._safe_int(target.split(":")[0])
-            self._indoor_temperature = self._safe_int(values[0])
-            self._outdoor_temperature = self._safe_int(values[1])
-            self._wifi_signal = self._safe_int(values[2])
-
+            parsed = (
+                self._safe_int(target.split(":")[0]),
+                self._safe_int(values[0]),
+                self._safe_int(values[1]),
+                self._safe_int(values[2]),
+            )
         except (IndexError, ValueError, AttributeError):
             _LOGGER.debug("Unable to parse current state: %s", self.current_state)
+            return
+
+        (
+            self._target_temperature,
+            self._indoor_temperature,
+            self._outdoor_temperature,
+            self._wifi_signal,
+        ) = parsed
 
     @staticmethod
     def _safe_int(value: str | None) -> int | None:
