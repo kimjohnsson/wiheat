@@ -10,8 +10,12 @@ because byte 3 of the payload carries BOTH values:
     byte3 = (fan_speed << 4) | hvac_mode
 
 Section 1 pins that encoding to every example documented in
-custom_components/wiheat/README.md. Sections 3-9 drive the climate entity
+custom_components/wiheat/README.md. Sections 3-14 drive the climate entity
 against a fake pump.
+
+Sections 15-23 cover byte 5 (swing), which is packed the same way —
+(horizontal << 4) | vertical — but is never echoed back in the status string,
+so the entity has to remember what it last sent.
 """
 
 import asyncio
@@ -228,6 +232,107 @@ asyncio.run(e.async_set_hvac_mode(HVACMode.COOL))
 asyncio.run(e.async_set_fan_mode(FAN_LOW))
 check("payload", e.api.sent[-1], "0x5:0x11:0x32:0x16:0x08:0x80:0x00:0xF0")
 check("entity mode stayed cool", e._attr_hvac_mode, HVACMode.COOL)
+
+# ---------------------------------------------------------------------------
+# Swing. Byte 5 is (horizontal << 4) | vertical, and the pump never echoes it
+# back, so the entity has to remember what it sent. Note that FakePump above
+# also does not copy byte 5 into its status — which is exactly what the real
+# pump does, so these tests exercise the real constraint.
+# ---------------------------------------------------------------------------
+
+encode_swing = generate_payload.encode_swing
+gp = generate_payload
+
+
+def swing_byte(payload):
+    return payload.split(":")[4]
+
+
+print("\n[15] byte5 encoding vs every swing example in the README")
+for h, v, expected, label in [
+    (gp.SWING_H_AUTO, gp.SWING_V_UP, "0x09", "vertical Up"),
+    (gp.SWING_H_AUTO, gp.SWING_V_CENTER, "0x0C", "vertical Center"),
+    (gp.SWING_H_AUTO, gp.SWING_V_DOWN, "0x0D", "vertical Down"),
+    (gp.SWING_H_AUTO, gp.SWING_V_AUTO, "0x08", "vertical Auto"),
+    (gp.SWING_H_LEFT, gp.SWING_V_AUTO, "0x28", "horizontal Left"),
+    (gp.SWING_H_CENTER, gp.SWING_V_AUTO, "0x18", "horizontal Center"),
+    (gp.SWING_H_RIGHT, gp.SWING_V_AUTO, "0x38", "horizontal Right"),
+    (gp.SWING_H_SWING, gp.SWING_V_AUTO, "0x88", "horizontal All/swing"),
+]:
+    check(label, encode_swing(h, v), expected)
+
+print("\n[16] all 20 horizontal x vertical combinations survive a round trip")
+bad = []
+for h in gp.VALID_SWING_HORIZONTAL:
+    for v in gp.VALID_SWING_VERTICAL:
+        byte5 = int(encode_swing(h, v), 16)
+        if (byte5 >> 4, byte5 & 0xF) != (h, v):
+            bad.append((h, v))
+check("round trip", bad, [])
+
+print("\n[17] before swing is ever set, every command still sends 0x08 (no regression)")
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
+asyncio.run(e.async_set_fan_mode(FAN_HIGH))
+asyncio.run(e.async_set_temperature(temperature=24))
+asyncio.run(e.async_set_hvac_mode(HVACMode.COOL))
+check("byte5 on every payload", [swing_byte(p) for p in e.api.sent], ["0x08"] * 3)
+check("entity swing", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", "auto"))
+
+print("\n[18] the bug: swing must survive unrelated commands")
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
+asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
+asyncio.run(e.async_set_swing_horizontal_mode(climate.SWING_H_LEFT_MODE))
+check("swing payload", swing_byte(e.api.sent[-1]), "0x2D")
+asyncio.run(e.async_set_fan_mode(FAN_MEDIUM))
+asyncio.run(e.async_set_temperature(temperature=21))
+asyncio.run(e.async_turn_off())
+asyncio.run(e.async_turn_on())
+check("byte5 kept on fan/temp/off/on", [swing_byte(p) for p in e.api.sent[2:]], ["0x2D"] * 4)
+check("pump status still does not report swing", e.api.current_state.split(":")[4:6], ["0", "8"])
+asyncio.run(e.async_update())
+check("poll does not reset swing", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("down", "left"))
+
+print("\n[19] entering dry with the louvre down forces it to auto, keeps horizontal")
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
+asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
+asyncio.run(e.async_set_swing_horizontal_mode(climate.SWING_H_LEFT_MODE))
+asyncio.run(e.async_set_hvac_mode(HVACMode.DRY))
+check("payload", e.api.sent[-1], "0x3:0x11:0x23:0x16:0x28:0x80:0x00:0xF0")
+check("entity swing", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", "left"))
+check("swing_modes offered in dry", e._attr_swing_modes, ["auto", "up", "center"])
+
+print("\n[20] down is refused in dry and fan-only, not sent")
+for mode in (3, 4):
+    e = entity(f"128:11:3:{mode}:0:8:F0:1740765339?19:3:-48:0?NA")
+    asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
+    check(f"mode {mode}: payloads sent", e.api.sent, [])
+    asyncio.run(e.async_set_swing_mode(climate.SWING_UP))
+    check(f"mode {mode}: up accepted", swing_byte(e.api.sent[-1]), "0x09")
+
+print("\n[21] swing is restored across a restart")
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
+e._last_state = types.SimpleNamespace(
+    attributes={"swing_mode": "down", "swing_horizontal_mode": "right"}
+)
+asyncio.run(e.async_added_to_hass())
+check("restored", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("down", "right"))
+asyncio.run(e.async_set_fan_mode(FAN_LOW))
+check("first command after restart sends restored swing", swing_byte(e.api.sent[-1]), "0x3D")
+
+print("\n[22] restored down + pump switched to dry from the app: poll falls back to auto")
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
+e._last_state = types.SimpleNamespace(attributes={"swing_mode": "down"})
+asyncio.run(e.async_added_to_hass())
+e.api.current_state = "128:11:2:3:0:8:F0:1740765339?19:3:-48:0?NA"  # app put it in dry
+asyncio.run(e.async_update())
+check("swing after poll", e._attr_swing_mode, "auto")
+check("nothing sent by the poll", e.api.sent, [])
+
+print("\n[23] garbage in the restored state is ignored")
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
+e._last_state = types.SimpleNamespace(attributes={"swing_mode": "sideways", "swing_horizontal_mode": 7})
+asyncio.run(e.async_added_to_hass())
+check("defaults kept", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", "auto"))
 
 print("\n" + "=" * 62)
 if FAILURES:
