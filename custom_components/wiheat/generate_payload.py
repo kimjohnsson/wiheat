@@ -64,7 +64,29 @@ VALID_HVAC_MODES = (HVAC_HEAT, HVAC_COOL, HVAC_DRY, HVAC_FAN_ONLY)
 NO_TARGET_TEMP = 128
 DEFAULT_TARGET_TEMP = 20
 
-DEFAULT_SWING = "0x08"
+# Byte 5 (swing) is a combined byte too: (horizontal << 4) | vertical.
+# The pump never reports it back in the status string, so the integration has
+# to remember what it last sent. Auto/auto is 0x08, which is what was always
+# sent before swing became controllable.
+SWING_V_AUTO = 0x8
+SWING_V_UP = 0x9
+SWING_V_CENTER = 0xC
+SWING_V_DOWN = 0xD
+VALID_SWING_VERTICAL = (SWING_V_AUTO, SWING_V_UP, SWING_V_CENTER, SWING_V_DOWN)
+
+SWING_H_AUTO = 0x0
+SWING_H_CENTER = 0x1
+SWING_H_LEFT = 0x2
+SWING_H_RIGHT = 0x3
+SWING_H_SWING = 0x8
+VALID_SWING_HORIZONTAL = (
+    SWING_H_AUTO,
+    SWING_H_CENTER,
+    SWING_H_LEFT,
+    SWING_H_RIGHT,
+    SWING_H_SWING,
+)
+
 ION_OFF = "0xF0"
 
 
@@ -75,6 +97,15 @@ def encode_mode_fan_speed(fan_speed, hvac_mode):
     if hvac_mode not in VALID_HVAC_MODES:
         hvac_mode = HVAC_HEAT
     return f"0x{(fan_speed << 4) | hvac_mode:02X}"
+
+
+def encode_swing(horizontal, vertical):
+    """Encode the combined horizontal/vertical swing byte."""
+    if horizontal not in VALID_SWING_HORIZONTAL:
+        horizontal = SWING_H_AUTO
+    if vertical not in VALID_SWING_VERTICAL:
+        vertical = SWING_V_AUTO
+    return f"0x{(horizontal << 4) | vertical:02X}"
 
 
 def normalize_target_temp(target_temp):
@@ -89,12 +120,14 @@ def generate_payload(
     power_state,
     fan_speed,
     hvac_mode,
-    swing=DEFAULT_SWING,
+    swing_horizontal=SWING_H_AUTO,
+    swing_vertical=SWING_V_AUTO,
     ion=ION_OFF,
 ):
     """Build the ``data`` payload sent to the Wi-Heat API."""
     target_temp = normalize_target_temp(target_temp)
     mode_fan_speed = encode_mode_fan_speed(fan_speed, hvac_mode)
+    swing = encode_swing(swing_horizontal, swing_vertical)
 
     return (
         f"{temp_lookup[target_temp]}:"

@@ -12,3 +12,5 @@ class ClimateEntityFeature:
     TARGET_TEMPERATURE = 2
     TURN_OFF = 4
     TURN_ON = 8
+    SWING_MODE = 32
+    SWING_HORIZONTAL_MODE = 512
