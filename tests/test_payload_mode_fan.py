@@ -61,6 +61,10 @@ climate = _mods["climate"]
 encode_mode_fan_speed = generate_payload.encode_mode_fan_speed
 WiHeatClimate = climate.WiHeatClimate
 
+# The real entity spaces commands out to stay clear of the pump's busy-lock;
+# the fake pump has no such problem and the tests should not take minutes.
+climate.MIN_COMMAND_GAP = 0
+
 from homeassistant.components.climate.const import (  # noqa: E402
     HVACMode,
     FAN_LOW,
@@ -276,7 +280,8 @@ asyncio.run(e.async_set_fan_mode(FAN_HIGH))
 asyncio.run(e.async_set_temperature(temperature=24))
 asyncio.run(e.async_set_hvac_mode(HVACMode.COOL))
 check("byte5 on every payload", [swing_byte(p) for p in e.api.sent], ["0x08"] * 3)
-check("entity swing", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", "auto"))
+check("entity swing", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", None))
+check("horizontal options offered (no auto)", e._attr_swing_horizontal_modes, ["left", "center", "right", "swing"])
 
 print("\n[18] the bug: swing must survive unrelated commands")
 e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
@@ -332,7 +337,46 @@ print("\n[23] garbage in the restored state is ignored")
 e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
 e._last_state = types.SimpleNamespace(attributes={"swing_mode": "sideways", "swing_horizontal_mode": 7})
 asyncio.run(e.async_added_to_hass())
-check("defaults kept", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", "auto"))
+check("defaults kept", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", None))
+
+print("\n[24] a refused command raises and leaves the entity untouched")
+from homeassistant.exceptions import HomeAssistantError  # noqa: E402
+
+
+class RefusingPump(FakePump):
+    async def set_hvac_state(self, payload):
+        self.sent.append(payload)
+        return False
+
+
+e = WiHeatClimate(RefusingPump("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA"))
+try:
+    asyncio.run(e.async_set_swing_mode(climate.SWING_UP))
+    raised = None
+except HomeAssistantError as err:
+    raised = str(err)
+check("raised HomeAssistantError", raised is not None and "0x09" in raised, True)
+check("payload was attempted", len(e.api.sent), 1)
+check("swing not updated", e._attr_swing_mode, "auto")
+check("mode not updated", e._attr_hvac_mode, HVACMode.COOL)
+
+print("\n[25] commands are spaced out by MIN_COMMAND_GAP")
+climate.MIN_COMMAND_GAP = 0.2
+e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
+import time as _time  # noqa: E402
+
+
+async def _two_commands():
+    await e.async_set_fan_mode(FAN_LOW)
+    await e.async_set_fan_mode(FAN_HIGH)
+
+
+t0 = _time.monotonic()
+asyncio.run(_two_commands())
+elapsed = _time.monotonic() - t0
+check("second command waited for the gap", elapsed >= 0.2, True)
+check("both sent", [p.split(":")[2] for p in e.api.sent], ["0x31", "0x71"])
+climate.MIN_COMMAND_GAP = 0
 
 print("\n" + "=" * 62)
 if FAILURES:

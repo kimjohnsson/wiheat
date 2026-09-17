@@ -1,6 +1,8 @@
 """WiHeat climate platform."""
 
+import asyncio
 import logging
+import time
 
 from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature
 from homeassistant.components.climate.const import (
@@ -11,6 +13,7 @@ from homeassistant.components.climate.const import (
     FAN_HIGH,
 )
 from homeassistant.const import UnitOfTemperature
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN
 from .generate_payload import (
@@ -41,6 +44,11 @@ _LOGGER = logging.getLogger(__name__)
 POWER_ON = 11
 POWER_OFF = 21
 
+# The pump's cloud refuses commands for a minute or two when it gets several
+# in quick succession (seen twice on hardware: 13 and 11 refusals in a row).
+# Commands are serialized and spaced out at least this far apart.
+MIN_COMMAND_GAP = 3.0
+
 FAN_MODE_TO_SPEED = {
     FAN_AUTO: FAN_SPEED_AUTO,
     FAN_LOW: FAN_SPEED_LOW,
@@ -67,7 +75,9 @@ FAN_MODES_ALL = [FAN_AUTO, FAN_LOW, FAN_MEDIUM, FAN_HIGH]
 FAN_MODES_DRY = [FAN_AUTO]
 FAN_MODES_FAN_ONLY = [FAN_LOW, FAN_MEDIUM, FAN_HIGH]
 
-# Vertical swing (louvre up/down). "center" is straight ahead.
+# Vertical louvre position. HA calls the attribute `swing_mode`; the label
+# shown to the user comes from translations ("Louvre direction"), because
+# only "auto" actually swings. "center" is straight ahead.
 SWING_AUTO = "auto"
 SWING_UP = "up"
 SWING_CENTER = "center"
@@ -85,15 +95,15 @@ VALUE_TO_SWING_MODE = {v: k for k, v in SWING_MODE_TO_VALUE.items()}
 SWING_MODES_ALL = [SWING_AUTO, SWING_UP, SWING_CENTER, SWING_DOWN]
 SWING_MODES_NO_DOWN = [SWING_AUTO, SWING_UP, SWING_CENTER]
 
-# Horizontal swing. "swing" is the left-right sweep, which is what the app
-# calls it. Every option is available in every HVAC mode.
-SWING_H_AUTO_MODE = "auto"
+# Horizontal louvre position; "swing" is the left-right sweep. Every option
+# is available in every HVAC mode. There is no "auto" here: the nibble the
+# app sends when it has not touched the horizontal axis (0x0) is not a
+# position, so it is kept as "not set" (None) and never offered.
 SWING_H_LEFT_MODE = "left"
 SWING_H_CENTER_MODE = "center"
 SWING_H_RIGHT_MODE = "right"
 SWING_H_SWING_MODE = "swing"
 SWING_H_MODE_TO_VALUE = {
-    SWING_H_AUTO_MODE: SWING_H_AUTO,
     SWING_H_LEFT_MODE: SWING_H_LEFT,
     SWING_H_CENTER_MODE: SWING_H_CENTER,
     SWING_H_RIGHT_MODE: SWING_H_RIGHT,
@@ -103,7 +113,7 @@ VALUE_TO_SWING_H_MODE = {v: k for k, v in SWING_H_MODE_TO_VALUE.items()}
 SWING_H_MODES_ALL = list(SWING_H_MODE_TO_VALUE)
 
 # swing_horizontal_mode arrived in Home Assistant 2024.12. Older cores still
-# get vertical swing; the horizontal control is simply not offered.
+# get the vertical control; the horizontal one is simply not offered.
 HAS_HORIZONTAL_SWING = hasattr(ClimateEntityFeature, "SWING_HORIZONTAL_MODE")
 
 
@@ -130,6 +140,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class WiHeatClimate(ClimateEntity, RestoreEntity):
     """Representation of a WiHeat climate entity."""
 
+    _attr_translation_key = "wiheat"
+
     def __init__(self, api):
         self.api = api
         # Decoded state (target_temp, power_state, fan_speed, hvac_mode, ion)
@@ -139,6 +151,8 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         # API already has cached, in case a status was fetched before this
         # entity was constructed.
         self._state = self._decode_status(api.current_state)
+        self._send_lock = None  # created on first use, inside the event loop
+        self._last_send = 0.0
         self._attr_current_temperature = None
         self._attr_target_temperature = None
         self._attr_has_entity_name = True
@@ -161,12 +175,13 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         self._attr_fan_mode = FAN_AUTO
 
         # Swing is not reported by the pump, so these attributes are the only
-        # record of it. They start at auto/auto (byte 0x08), which is what the
-        # integration has always sent, and are restored across restarts.
+        # record of it. Vertical starts at auto and horizontal at "not set";
+        # together that is byte 0x08, which is what the integration has
+        # always sent. Both are restored across restarts.
         self._attr_swing_modes = SWING_MODES_ALL
         self._attr_swing_mode = SWING_AUTO
         self._attr_swing_horizontal_modes = SWING_H_MODES_ALL
-        self._attr_swing_horizontal_mode = SWING_H_AUTO_MODE
+        self._attr_swing_horizontal_mode = None
 
         self._attr_supported_features = (
             ClimateEntityFeature.FAN_MODE
@@ -265,6 +280,11 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         if self._attr_swing_mode not in self._attr_swing_modes:
             self._attr_swing_mode = SWING_AUTO
 
+    def _swing_horizontal_value(self):
+        if self._attr_swing_horizontal_mode is None:
+            return SWING_H_AUTO
+        return SWING_H_MODE_TO_VALUE[self._attr_swing_horizontal_mode]
+
     async def _apply(self, **overrides):
         """Send a payload built from the last known state plus overrides.
 
@@ -280,6 +300,9 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
 
         Swing is not part of `self._state` because the pump never reports
         it; it is taken from the entity attributes unless overridden.
+
+        A refused command raises, so the user sees an error instead of the
+        control silently snapping back.
         """
         if self._state is None:
             return False
@@ -288,8 +311,7 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
             "swing_vertical", SWING_MODE_TO_VALUE[self._attr_swing_mode]
         )
         swing_horizontal = overrides.pop(
-            "swing_horizontal",
-            SWING_H_MODE_TO_VALUE[self._attr_swing_horizontal_mode],
+            "swing_horizontal", self._swing_horizontal_value()
         )
         new_state = {**self._state, **overrides}
 
@@ -303,15 +325,28 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
             ion=new_state["ion"],
         )
 
-        if await self.api.set_hvac_state(payload):
-            self._state = new_state
-            self._attr_swing_mode = VALUE_TO_SWING_MODE[swing_vertical]
-            self._attr_swing_horizontal_mode = VALUE_TO_SWING_H_MODE[swing_horizontal]
-            self._apply_state_to_attrs(new_state)
-            return True
+        if self._send_lock is None:
+            self._send_lock = asyncio.Lock()
+        async with self._send_lock:
+            wait = MIN_COMMAND_GAP - (time.monotonic() - self._last_send)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            acknowledged = await self.api.set_hvac_state(payload)
+            self._last_send = time.monotonic()
 
-        _LOGGER.warning("WiHeat did not acknowledge payload: %s", payload)
-        return False
+        if not acknowledged:
+            _LOGGER.warning("WiHeat did not acknowledge payload: %s", payload)
+            raise HomeAssistantError(
+                f"The Wi-Heat pump did not accept the command (payload {payload}). "
+                "It refuses commands for a minute or two after several in quick "
+                "succession; wait and try again."
+            )
+
+        self._state = new_state
+        self._attr_swing_mode = VALUE_TO_SWING_MODE[swing_vertical]
+        self._attr_swing_horizontal_mode = VALUE_TO_SWING_H_MODE.get(swing_horizontal)
+        self._apply_state_to_attrs(new_state)
+        return True
 
     async def async_update(self):
         data = await self.api.get_hvac_status()
