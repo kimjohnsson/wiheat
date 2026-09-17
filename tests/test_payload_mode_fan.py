@@ -308,13 +308,25 @@ check("payload", e.api.sent[-1], "0x3:0x11:0x23:0x16:0x28:0x80:0x00:0xF0")
 check("entity swing", (e._attr_swing_mode, e._attr_swing_horizontal_mode), ("auto", "left"))
 check("swing_modes offered in dry", e._attr_swing_modes, ["auto", "up", "center"])
 
-print("\n[20] down is refused in dry and fan-only, not sent")
-for mode in (3, 4):
-    e = entity(f"128:11:3:{mode}:0:8:F0:1740765339?19:3:-48:0?NA")
+print("\n[20] down is only offered in heat; refused (not sent) in cool, dry and fan-only")
+for mode in (2, 3, 4):
+    e = entity(f"22:11:3:{mode}:0:8:F0:1740765339?19:3:-48:0?NA")
+    check(f"mode {mode}: swing_modes offered", e._attr_swing_modes, ["auto", "up", "center"])
     asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
     check(f"mode {mode}: payloads sent", e.api.sent, [])
     asyncio.run(e.async_set_swing_mode(climate.SWING_UP))
     check(f"mode {mode}: up accepted", swing_byte(e.api.sent[-1]), "0x09")
+e = entity("22:11:3:1:0:8:F0:1740765339?19:3:-48:0?NA")
+check("heat: down offered", e._attr_swing_modes, ["auto", "up", "center", "down"])
+asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
+check("heat: down sent", swing_byte(e.api.sent[-1]), "0x0D")
+
+print("\n[20b] leaving heat with the louvre down forces it to auto")
+e = entity("22:11:3:1:0:8:F0:1740765339?19:3:-48:0?NA")
+asyncio.run(e.async_set_swing_mode(climate.SWING_DOWN))
+asyncio.run(e.async_set_hvac_mode(HVACMode.COOL))
+check("payload into cool", swing_byte(e.api.sent[-1]), "0x08")
+check("entity swing", e._attr_swing_mode, "auto")
 
 print("\n[21] swing is restored across a restart")
 e = entity("22:11:2:1:0:8:F0:1740765339?19:3:-48:0?NA")
@@ -381,6 +393,44 @@ e = WiHeatClimate(FlakyPump("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA"))
 asyncio.run(e.async_set_swing_mode(climate.SWING_UP))
 check("sent twice", len(e.api.sent), 2)
 check("swing updated after retry", e._attr_swing_mode, "up")
+
+print("\n[24c] a cloud error or a stalled call is treated as a refusal, never leaks")
+
+
+class ExplodingPump(FakePump):
+    async def set_hvac_state(self, payload):
+        self.sent.append(payload)
+        raise OSError("connection reset by peer")
+
+
+e = WiHeatClimate(ExplodingPump("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA"))
+try:
+    asyncio.run(e.async_set_fan_mode(FAN_HIGH))
+    raised = None
+except HomeAssistantError as err:
+    raised = err
+except Exception as err:  # noqa: BLE001
+    raised = err
+check("only HomeAssistantError escapes", type(raised).__name__, "HomeAssistantError")
+check("retried once", len(e.api.sent), 2)
+
+
+class StalledPump(FakePump):
+    async def set_hvac_state(self, payload):
+        self.sent.append(payload)
+        await asyncio.sleep(60)
+
+
+climate.REQUEST_TIMEOUT = 0.05
+e = WiHeatClimate(StalledPump("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA"))
+try:
+    asyncio.run(e.async_set_fan_mode(FAN_HIGH))
+    raised = None
+except HomeAssistantError as err:
+    raised = err
+check("stalled call times out into HomeAssistantError", type(raised).__name__, "HomeAssistantError")
+check("state untouched", e._attr_fan_mode, "auto")
+climate.REQUEST_TIMEOUT = 10.0
 
 print("\n[25] commands are spaced out by MIN_COMMAND_GAP")
 climate.MIN_COMMAND_GAP = 0.2
