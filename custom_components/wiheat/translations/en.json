@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Wi-Heat",
+        "description": "Sign in with the account you use in the Wi-Heat app.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach Wi-Heat. Check your connection and try again.",
+      "too_many_attempts": "Too many login attempts. Wi-Heat blocks logins for 24 hours; wait before trying again."
+    },
+    "abort": {
+      "already_configured": "This Wi-Heat account is already configured."
+    }
+  },
+  "entity": {
+    "climate": {
+      "wiheat": {
+        "state_attributes": {
+          "swing_mode": {
+            "name": "Louvre direction",
+            "state": {
+              "auto": "Auto",
+              "up": "Up",
+              "center": "Forward",
+              "down": "Down"
+            }
+          },
+          "swing_horizontal_mode": {
+            "name": "Swing",
+            "state": {
+              "left": "Left",
+              "center": "Center",
+              "right": "Right",
+              "swing": "Swing"
+            }
+          }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "pump_busy": {
+      "message": "The pump did not accept the command. It stops responding for a while after a mode change or several quick changes - wait a couple of minutes and try again."
+    }
+  }
+}

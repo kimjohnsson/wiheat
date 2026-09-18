@@ -1,10 +1,31 @@
 """WiHeat API handler."""
 
+from __future__ import annotations
+
 import json
 import logging
+
+import aiohttp
+
 from .const import BASE_URL, CONF_CLIENT_ID, SESSION
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class WiHeatError(Exception):
+    """Base error for the Wi-Heat API."""
+
+
+class WiHeatConnectionError(WiHeatError):
+    """Could not reach the API, or it answered with something unexpected."""
+
+
+class WiHeatAuthError(WiHeatError):
+    """The API rejected the credentials."""
+
+
+class WiHeatBannedError(WiHeatAuthError):
+    """Too many login attempts; the API blocks logins for 24 hours."""
 
 
 class WiHeatAPI:
@@ -40,66 +61,80 @@ class WiHeatAPI:
     def wifi_signal(self):
         return self._wifi_signal
 
+    async def _post_json(self, path, data):
+        """POST a form and decode the JSON body, mapping failures to typed errors."""
+        try:
+            async with self.session.post(f"{BASE_URL}/{path}", data=data) as response:
+                body = await response.text()
+        except (aiohttp.ClientError, OSError, TimeoutError) as err:
+            raise WiHeatConnectionError(f"Could not reach Wi-Heat: {err}") from err
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as err:
+            _LOGGER.debug("Non-JSON response from %s: %s", path, body)
+            raise WiHeatConnectionError(
+                f"Unexpected response from Wi-Heat ({path})"
+            ) from err
+
     async def login(self):
-        async with self.session.post(
-            f"{BASE_URL}/usr_API_2.php",
-            data={
+        """Log in and fetch the device details.
+
+        Raises WiHeatBannedError, WiHeatAuthError or WiHeatConnectionError;
+        returns True on success so existing callers can keep `if await login()`.
+        """
+        data = await self._post_json(
+            "usr_API_2.php",
+            {
                 "epost": self.email,
                 "id": CONF_CLIENT_ID,
                 "psw": self.password,
                 "q": "login",
                 "session": SESSION,
             },
-        ) as response:
-            body = await response.text()
+        )
 
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError as e:
-            _LOGGER.error("Error decoding JSON: %s", e)
-            _LOGGER.error("Response body: %s", body)
-            return False
-
-        if "token" in data:
+        # A rejected login is HTTP 200 with the token key present but empty:
+        #     {"status":"fail","id":"","token":""}
+        # (captured live 2026-09-17), so the key alone proves nothing.
+        if isinstance(data, dict) and data.get("token"):
             self.token = data["token"]
             self.user_id = data["id"]
-
             self.device_info_fetched = False
             await self.get_device_info()
             return True
 
-        if data.get("status") == "ban":
-            _LOGGER.error(
-                "Too many login attempts, please wait 24 hours and try again."
+        if isinstance(data, dict) and data.get("status") == "ban":
+            raise WiHeatBannedError(
+                "Too many login attempts; Wi-Heat blocks logins for 24 hours"
             )
 
-        return False
+        raise WiHeatAuthError("Wi-Heat rejected the email or password")
 
     async def get_device_info(self):
         if self.device_info_fetched:
             return False
 
-        async with self.session.post(
-            f"{BASE_URL}/usr_API_2.php",
-            data={
+        data = await self._post_json(
+            "usr_API_2.php",
+            {
                 "epost": self.user_id,
                 "id": CONF_CLIENT_ID,
                 "psw": self.token,
                 "q": "getVPhwid",
                 "session": SESSION,
             },
-        ) as response:
-            body = await response.text()
+        )
 
-            try:
-                data = json.loads(body)
-            except json.JSONDecodeError as e:
-                _LOGGER.error("Error decoding JSON: %s", e)
-                _LOGGER.error("Response body: %s", body)
-                return False
+        # The API answers [device name, hwid, device key]; anything else is an
+        # error object or a changed API, not something to unpack blindly.
+        if not isinstance(data, list) or len(data) != 3:
+            _LOGGER.debug("Unexpected device info response: %s", data)
+            raise WiHeatConnectionError("Unexpected device info response from Wi-Heat")
 
         self.device_name, self.hwid, self.device_key = data
         self.device_info_fetched = True
+        return True
 
     async def get_hvac_status(self):
         if not self.hwid or not self.device_key:
@@ -137,13 +172,14 @@ class WiHeatAPI:
             return (await response.text()) == "ACK"
 
     def _parse_current_state(self):
-        """Parse the current HVAC state."""
+        """Parse the current HVAC state.
 
-        self._target_temperature = None
-        self._indoor_temperature = None
-        self._outdoor_temperature = None
-        self._wifi_signal = None
-
+        While the pump is busy (mode switch, several quick commands) the cloud
+        answers with something that is not a status string for a few minutes.
+        The parsed values are then left as they were, so the sensors keep
+        showing the last real reading instead of flipping to unknown while
+        the climate entity, which already keeps its last state, does not.
+        """
         if not self.current_state:
             return
 
@@ -151,13 +187,22 @@ class WiHeatAPI:
             target, values = self.current_state.split("?", 1)
             values = values.split(":")
 
-            self._target_temperature = self._safe_int(target.split(":")[0])
-            self._indoor_temperature = self._safe_int(values[0])
-            self._outdoor_temperature = self._safe_int(values[1])
-            self._wifi_signal = self._safe_int(values[2])
-
+            parsed = (
+                self._safe_int(target.split(":")[0]),
+                self._safe_int(values[0]),
+                self._safe_int(values[1]),
+                self._safe_int(values[2]),
+            )
         except (IndexError, ValueError, AttributeError):
             _LOGGER.debug("Unable to parse current state: %s", self.current_state)
+            return
+
+        (
+            self._target_temperature,
+            self._indoor_temperature,
+            self._outdoor_temperature,
+            self._wifi_signal,
+        ) = parsed
 
     @staticmethod
     def _safe_int(value: str | None) -> int | None:
