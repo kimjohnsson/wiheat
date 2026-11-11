@@ -396,6 +396,8 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         return True
 
     async def async_update(self):
+        if not self.api.polling_enabled:
+            return
         await self.api.get_hvac_status()
         state = self._decode_status(self.api.current_state)
         if state is None:

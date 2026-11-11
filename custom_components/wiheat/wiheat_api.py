@@ -39,6 +39,7 @@ class WiHeatAPI:
         self.device_key = None
         self.device_name = None
         self.current_state = None
+        self.polling_enabled = True
         self._target_temperature = None
         self._indoor_temperature = None
         self._outdoor_temperature = None
