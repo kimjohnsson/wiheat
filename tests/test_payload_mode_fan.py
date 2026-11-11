@@ -103,6 +103,7 @@ class FakePump:
 
     device_name = "IVT"
     user_id = "1"
+    polling_enabled = True
 
     def __init__(self, state):
         self.current_state = state
@@ -541,7 +542,7 @@ class FakeSession:
         self.bodies = list(bodies)
         self.calls = []
 
-    def post(self, url, data=None):
+    def post(self, url, data=None, **kwargs):
         self.calls.append((url.rsplit("/", 1)[-1], data["q"] if data and "q" in data else data.get("dir")))
         body = self.bodies.pop(0)
         if isinstance(body, Exception):
@@ -608,10 +609,32 @@ check("indoor temperature unaffected", sensors[0].native_value, 19)
 print("\n[29] climate current temperature comes from the parsed status, not a re-parse")
 e = entity("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA")
 run(e.async_update())
-check("current temperature", e._attr_current_temperature, 19)
+check("current temperature", e._attr_native_current_temperature, 19)
 e.api.current_state = "22:11:2:2:0:8:F0:1740765339"  # seven fields, no '?': used to raise IndexError
 run(e.async_update())
-check("no '?' segment -> keeps the last reading, no crash", e._attr_current_temperature, 19)
+check("no '?' segment -> keeps the last reading, no crash", e._attr_native_current_temperature, 19)
+
+print("\n[30] polling off: no request goes out and the last reading is kept")
+e = entity("22:11:2:2:0:8:F0:1740765339?19:3:-48:0?NA")
+run(e.async_update())
+check("reading before the pause", e._attr_native_current_temperature, 19)
+# The pump moves on while polling is paused. Route the fake status through a
+# session, the way WiHeatAPI does, so a poll that leaked past the switch shows
+# up as a POST here and as a fresh 26 below.
+e.api.session = FakeSession("22:11:2:2:0:8:F0:1740765339?26:3:-48:0?NA")
+
+
+async def status_over_session():
+    async with e.api.session.post("API_2.php", data={"dir": "get"}) as response:
+        return await response.text()
+
+
+e.api.get_hvac_status = status_over_session
+e.api.current_state = "22:11:2:2:0:8:F0:1740765339?26:3:-48:0?NA"
+e.api.polling_enabled = False
+run(e.async_update())
+check("polling off -> no API call", e.api.session.calls, [])
+check("polling off -> last reading kept", e._attr_native_current_temperature, 19)
 
 print("\n" + "=" * 62)
 if FAILURES:

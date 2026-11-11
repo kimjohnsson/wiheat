@@ -5,5 +5,10 @@ class ClientError(Exception):
     pass
 
 
+class ClientTimeout:
+    def __init__(self, total=None, **kwargs):
+        self.total = total
+
+
 class ClientSession:
     pass
