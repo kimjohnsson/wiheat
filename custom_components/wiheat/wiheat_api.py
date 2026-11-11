@@ -11,6 +11,11 @@ from .const import BASE_URL, CONF_CLIENT_ID, SESSION
 
 _LOGGER = logging.getLogger(__name__)
 
+# aiohttp defaults to a 5 minute total timeout, and Home Assistant polls this
+# integration every 30 seconds. Without a bound of our own, one stalled request
+# blocks the entity update for minutes and the sensors simply stop moving.
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=20)
+
 
 class WiHeatError(Exception):
     """Base error for the Wi-Heat API."""
@@ -39,6 +44,7 @@ class WiHeatAPI:
         self.device_key = None
         self.device_name = None
         self.current_state = None
+        self.polling_enabled = True
         self._target_temperature = None
         self._indoor_temperature = None
         self._outdoor_temperature = None
@@ -64,7 +70,9 @@ class WiHeatAPI:
     async def _post_json(self, path, data):
         """POST a form and decode the JSON body, mapping failures to typed errors."""
         try:
-            async with self.session.post(f"{BASE_URL}/{path}", data=data) as response:
+            async with self.session.post(
+                f"{BASE_URL}/{path}", data=data, timeout=REQUEST_TIMEOUT
+            ) as response:
                 body = await response.text()
         except (aiohttp.ClientError, OSError, TimeoutError) as err:
             raise WiHeatConnectionError(f"Could not reach Wi-Heat: {err}") from err
@@ -149,6 +157,7 @@ class WiHeatAPI:
                 "token": self.token,
                 "usr": f"{self.user_id}.{CONF_CLIENT_ID}",
             },
+            timeout=REQUEST_TIMEOUT,
         ) as response:
             self.current_state = await response.text()
             self._parse_current_state()
@@ -168,6 +177,7 @@ class WiHeatAPI:
                 "token": self.token,
                 "usr": f"{self.user_id}.{CONF_CLIENT_ID}",
             },
+            timeout=REQUEST_TIMEOUT,
         ) as response:
             return (await response.text()) == "ACK"
 

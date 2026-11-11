@@ -162,8 +162,8 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         # just the network call -- see there.
         self._send_lock = asyncio.Lock()
         self._last_send = 0.0
-        self._attr_current_temperature = None
-        self._attr_target_temperature = None
+        self._attr_native_current_temperature = None
+        self._attr_native_target_temperature = None
         self._attr_has_entity_name = True
         self._attr_precision = 1.0
         self._attr_target_temperature_step = 1.0
@@ -171,7 +171,7 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         self._attr_min_temp = 10
         self._attr_name = self.api.device_name
         self._attr_unique_id = f"{self.api.user_id}-{self.api.device_name}"
-        self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+        self._attr_native_temperature_unit = UnitOfTemperature.CELSIUS
         self._attr_hvac_modes = [
             HVACMode.OFF,
             HVACMode.HEAT,
@@ -267,7 +267,7 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
 
     def _apply_state_to_attrs(self, state):
         """Reflect a decoded state dict onto the HA-visible entity attrs."""
-        self._attr_target_temperature = (
+        self._attr_native_target_temperature = (
             None if state["target_temp"] == NO_TARGET_TEMP else state["target_temp"]
         )
 
@@ -396,13 +396,15 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         return True
 
     async def async_update(self):
+        if not self.api.polling_enabled:
+            return
         await self.api.get_hvac_status()
         state = self._decode_status(self.api.current_state)
         if state is None:
             return
         self._state = state
         # Already parsed (and None-safe) by the API when it fetched the status.
-        self._attr_current_temperature = self.api.indoor_temperature
+        self._attr_native_current_temperature = self.api.indoor_temperature
         self._apply_state_to_attrs(state)
 
     async def async_set_temperature(self, **kwargs):

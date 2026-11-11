@@ -4,10 +4,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN
+from .const import CONF_POLLING, DOMAIN
 from .wiheat_api import WiHeatAPI, WiHeatAuthError, WiHeatConnectionError
 
-PLATFORMS = ["climate", "sensor"]
+PLATFORMS = ["climate", "sensor", "switch"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -34,6 +34,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             entry, unique_id=entry.data[CONF_EMAIL].lower()
         )
 
+    api.polling_enabled = entry.options.get(CONF_POLLING, True)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
