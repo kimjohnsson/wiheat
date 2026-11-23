@@ -7,7 +7,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import DOMAIN
 from .wiheat_api import WiHeatAPI, WiHeatAuthError, WiHeatConnectionError
 
-PLATFORMS = ["climate", "sensor"]
+PLATFORMS = ["climate", "sensor", "switch"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):

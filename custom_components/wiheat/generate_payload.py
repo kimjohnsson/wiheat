@@ -88,6 +88,7 @@ VALID_SWING_HORIZONTAL = (
 )
 
 ION_OFF = "0xF0"
+ION_ON = "0xF4"
 
 
 def encode_mode_fan_speed(fan_speed, hvac_mode):
