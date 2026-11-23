@@ -1,0 +1,28 @@
+{
+  "entity": {
+    "climate": {
+      "wiheat": {
+        "state_attributes": {
+          "swing_mode": {
+            "default": "mdi:arrow-up-down",
+            "state": {
+              "auto": "mdi:arrow-up-down",
+              "up": "mdi:arrow-up",
+              "center": "mdi:arrow-right",
+              "down": "mdi:arrow-down"
+            }
+          },
+          "swing_horizontal_mode": {
+            "default": "mdi:arrow-left-right",
+            "state": {
+              "left": "mdi:arrow-left",
+              "center": "mdi:arrow-up",
+              "right": "mdi:arrow-right",
+              "swing": "mdi:arrow-left-right"
+            }
+          }
+        }
+      }
+    }
+  }
+}
