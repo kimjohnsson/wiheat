@@ -1,0 +1,33 @@
+{
+  "entity": {
+    "climate": {
+      "wiheat": {
+        "state_attributes": {
+          "swing_mode": {
+            "name": "Verticaal",
+            "state": {
+              "auto": "Auto",
+              "up": "Omhoog",
+              "center": "Vooruit",
+              "down": "Omlaag"
+            }
+          },
+          "swing_horizontal_mode": {
+            "name": "Horizontaal",
+            "state": {
+              "left": "Links",
+              "center": "Midden",
+              "right": "Rechts",
+              "swing": "Zwenken"
+            }
+          }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "pump_busy": {
+      "message": "De pomp heeft de opdracht niet geaccepteerd. Na een standwissel of meerdere snelle wijzigingen reageert hij even niet. Wacht een paar minuten en probeer het opnieuw."
+    }
+  }
+}
