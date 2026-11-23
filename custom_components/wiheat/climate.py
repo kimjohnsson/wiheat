@@ -26,6 +26,7 @@ from .generate_payload import (
     HVAC_FAN_ONLY,
     HVAC_HEAT,
     ION_OFF,
+    ION_ON,
     NO_TARGET_TEMP,
     SWING_H_AUTO,
     SWING_H_CENTER,
@@ -151,6 +152,9 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
 
     def __init__(self, api):
         self.api = api
+        # The ion switch sends through this entity, so it shares the send
+        # lock and the remembered louvre position.
+        api.climate_entity = self
         # Decoded state (target_temp, power_state, fan_speed, hvac_mode, ion)
         # this entity last sent or fetched. `_apply()` updates it
         # optimistically from the payload it just sent instead of re-fetching
@@ -430,6 +434,19 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         # Keep the current HVAC mode — this is the fix for fan changes
         # flipping the pump into heat.
         await self._apply(fan_speed=fan_speed)
+
+    @property
+    def ion_on(self):
+        """Return the ion state, or None while the state is unknown."""
+        if self._state is None:
+            return None
+        return self._state["ion"] == ION_ON
+
+    async def async_set_ion(self, enabled):
+        """Switch ion on or off, keeping every other setting."""
+        if self._state is None:
+            raise HomeAssistantError("Wi-Heat status is not available yet")
+        await self._apply(ion=ION_ON if enabled else ION_OFF)
 
     async def async_set_swing_mode(self, swing_mode):
         if self._state is None:

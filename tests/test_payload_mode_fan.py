@@ -43,7 +43,7 @@ def _load_component():
     sys.modules["wiheat_under_test"] = pkg
 
     loaded = {}
-    for name in ("const", "generate_payload", "wiheat_api", "climate", "sensor"):
+    for name in ("const", "generate_payload", "wiheat_api", "climate", "sensor", "switch"):
         spec = importlib.util.spec_from_file_location(
             f"wiheat_under_test.{name}", COMPONENT / f"{name}.py"
         )
@@ -59,6 +59,7 @@ generate_payload = _mods["generate_payload"]
 climate = _mods["climate"]
 wiheat_api = _mods["wiheat_api"]
 sensor = _mods["sensor"]
+switch = _mods["switch"]
 
 encode_mode_fan_speed = generate_payload.encode_mode_fan_speed
 WiHeatClimate = climate.WiHeatClimate
@@ -189,6 +190,22 @@ print("\n[6] plasmacluster survives an unrelated change")
 e = entity("22:11:2:2:0:8:F4:1740765339?19:3:-48:0?NA")
 run(e.async_set_fan_mode(FAN_HIGH))
 check("ion byte", e.api.sent[0].split(":")[7], "0xF4")
+
+print("\n[6b] ion switch changes only the ion byte")
+e = entity("22:11:5:1:0:8:F0:1740765339?19:3:-48:0?NA")
+e.async_write_ha_state = lambda: None
+s = switch.WiHeatIonSwitch(e.api)
+s.async_write_ha_state = lambda: None
+check("available", s.available, True)
+check("starts off", s.is_on, False)
+run(s.async_turn_on())
+check("on payload", e.api.sent[-1], "0x5:0x11:0x51:0x16:0x08:0x80:0x00:0xF4")
+check("is on", s.is_on, True)
+run(s.async_turn_off())
+check("off payload", e.api.sent[-1], "0x5:0x11:0x51:0x16:0x08:0x80:0x00:0xF0")
+check("is off", s.is_on, False)
+e = entity(None)
+check("no status yet: unavailable", switch.WiHeatIonSwitch(e.api).available, False)
 
 print("\n[7] fan change in fan-only mode (target 128) must not raise KeyError")
 e = entity("128:11:2:4:0:8:F0:1740765339?19:3:-48:0?NA")
