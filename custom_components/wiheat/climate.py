@@ -406,11 +406,26 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         self._apply_state_to_attrs(state)
 
     async def async_set_temperature(self, **kwargs):
-        if "temperature" not in kwargs:
+        if self._state is None:
             return
 
-        # Keep the current fan speed and HVAC mode — only the target changes.
-        await self._apply(target_temp=int(kwargs["temperature"]))
+        temperature = kwargs.get("temperature")
+        hvac_mode = kwargs.get("hvac_mode")
+        if temperature is None and hvac_mode is None:
+            return
+
+        # climate.set_temperature may carry a mode. Send both in one command,
+        # so a pump that is off really starts. Without a mode, the current
+        # fan speed and HVAC mode are kept and only the target changes.
+        overrides = (
+            self._hvac_mode_overrides(hvac_mode) if hvac_mode is not None else {}
+        )
+        mode_value = overrides.get("hvac_mode", self._state["hvac_mode"])
+        if temperature is not None and mode_value not in MODES_WITHOUT_TARGET:
+            overrides["target_temp"] = int(temperature)
+
+        if overrides:
+            await self._apply(**overrides)
 
     async def async_set_fan_mode(self, fan_mode):
         if self._state is None:
@@ -458,9 +473,12 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         if self._state is None:
             return
 
+        await self._apply(**self._hvac_mode_overrides(hvac_mode))
+
+    def _hvac_mode_overrides(self, hvac_mode):
+        """Return the payload overrides that put the pump in a mode."""
         if hvac_mode == HVACMode.OFF:
-            await self._apply(power_state=POWER_OFF)
-            return
+            return {"power_state": POWER_OFF}
 
         mode_value = HVAC_MODE_TO_VALUE.get(hvac_mode, self._state["hvac_mode"])
 
@@ -482,13 +500,13 @@ class WiHeatClimate(ClimateEntity, RestoreEntity):
         if mode_value != HVAC_HEAT and swing_vertical == SWING_V_DOWN:
             swing_vertical = SWING_V_AUTO
 
-        await self._apply(
-            power_state=POWER_ON,
-            hvac_mode=mode_value,
-            target_temp=target_temp,
-            fan_speed=fan_speed,
-            swing_vertical=swing_vertical,
-        )
+        return {
+            "power_state": POWER_ON,
+            "hvac_mode": mode_value,
+            "target_temp": target_temp,
+            "fan_speed": fan_speed,
+            "swing_vertical": swing_vertical,
+        }
 
     async def async_turn_off(self):
         await self._apply(power_state=POWER_OFF)
